@@ -231,8 +231,68 @@ def fetch_athlete_data(cfg):
     hrv_7d   = sum(hrv_vals)/len(hrv_vals) if hrv_vals else hrv
     rhr_vals = [float(w.get("restingHR") or 0) for w in wellness if w.get("restingHR")]
     rhr_avg  = sum(rhr_vals)/len(rhr_vals) if rhr_vals else rhr
+
+    # ── 体組成データ (Garmin Body Composition / Withings / InBody 同期時) ──
+    # bodyFat: Intervals.icu wellness の "bodyFat" フィールド (%)
+    body_fat_pct_well = float(latest.get("bodyFat") or 0)
+    body_fat_pct = (body_fat_pct_well if body_fat_pct_well > 0
+                    else float(_a_cfg.get("body_fat_pct", 18.0)))
+    # muscleMassKg: Garmin/Withings から同期される骨格筋量 (kg)
+    muscle_mass_kg_well = float(latest.get("muscleMassKg") or latest.get("muscle_mass") or 0)
+
+    # ── Readiness (Garmin Training Readiness スコア 0-100) ──
+    readiness_well = (latest.get("trainingReadiness") or
+                      latest.get("training_readiness_score") or
+                      latest.get("icu_training_readiness"))
+    readiness = float(readiness_well) if readiness_well is not None else None
+
+    # ── 水分量 (Garmin/Apple Health 同期: ml単位) ──
+    hydration_ml = float(latest.get("hydration") or
+                         latest.get("hydrationMilliliters") or
+                         latest.get("hydrationIntakeInMilliliters") or 0) or None
+
+    # ── 総カロリー (totalKilocalories) の取得 ─────────────────────────────
+    # 優先順位:
+    #   1) Garmin 同期 "totalKilocalories" (BMR + アクティブカロリー合算)
+    #   2) "bmrKilocalories" + "kcal"(アクティビティ)
+    #   3) wellness["kcal"] + BMR 推算値
+    total_kcal_well = float(latest.get("totalKilocalories") or
+                            latest.get("totalCalories") or 0)
+    bmr_kcal_well   = float(latest.get("bmrKilocalories") or
+                            latest.get("bmrCalories") or 0)
+    act_kcal_well   = float(latest.get("kcal") or
+                            latest.get("activityCalories") or 0)
+
+    if total_kcal_well > 0:
+        total_kcal_latest = total_kcal_well
+        total_kcal_src    = "Garmin総消費(wellness同期)"
+    elif bmr_kcal_well > 0 and act_kcal_well > 0:
+        total_kcal_latest = bmr_kcal_well + act_kcal_well
+        total_kcal_src    = "BMR+アクティビティ(wellness合算)"
+    elif act_kcal_well > 0:
+        # BMRを体重・年齢から推算して加算
+        _h   = float(_a_cfg.get("height_cm", 170))
+        _age = int(_a_cfg.get("age", 35))
+        _sex = 5 if _a_cfg.get("gender","male") == "male" else -161
+        _bmr = round(10 * weight + 6.25 * _h - 5 * _age + _sex)
+        total_kcal_latest = act_kcal_well + _bmr
+        total_kcal_src    = "アクティビティ+BMR推算"
+    else:
+        total_kcal_latest = None
+        total_kcal_src    = "データなし"
+
     print(f"  ✅ 体重={weight}kg  FTP={ftp:.0f}W [{ftp_src}]  TP={_fmt_pace(int(tp_sec))}/km [{tp_src}]")
     print(f"     CSS={_swim_pace(css)}/100m [{css_src}]")
+    if total_kcal_latest:
+        print(f"     総消費kcal={total_kcal_latest:.0f}  [{total_kcal_src}]")
+    if readiness is not None:
+        print(f"     Readiness={readiness:.0f}/100")
+    if hydration_ml:
+        print(f"     水分={hydration_ml/1000:.1f}L")
+    if muscle_mass_kg_well > 0:
+        print(f"     骨格筋量={muscle_mass_kg_well:.1f}kg  体脂肪={body_fat_pct:.1f}%  [実測値]")
+    else:
+        print(f"     体脂肪={body_fat_pct:.1f}%  [{'wellness' if body_fat_pct_well > 0 else 'config推定'}]")
     # activities CSV の存在を確認して表示（ファイル名は複数パターン対応）
     _csv_found = _find_activities_csv()
     if _csv_found:
@@ -252,6 +312,11 @@ def fetch_athlete_data(cfg):
             "ctl":ctl,"atl":atl,"form":ctl-atl,
             "hrv":hrv,"hrv_7d_avg":hrv_7d,
             "sleep_h":sleep_h,"rhr":rhr,"rhr_avg":rhr_avg,
+            "body_fat_pct":    body_fat_pct,
+            "muscle_mass_kg":  muscle_mass_kg_well if muscle_mass_kg_well > 0 else None,
+            "readiness":       readiness,
+            "hydration_ml":    hydration_ml,
+            "total_kcal_src":  total_kcal_src,
             "wellness_history":wellness,
             "past_results":past_results,
             "weekly_counts":weekly_counts,

@@ -39,9 +39,9 @@ def print_calorie_summary(plan, cfg, athlete=None):
         if wid:
             well_map[wid] = w
 
-    # アクティビティカロリー: wellness["kcal"] または acts_90のcaloriesから計算
-    # Intervals.icuのwellnessには "kcal"(その日のアクティビティ消費kcal)がある場合がある
-    acts_90 = athlete.get("_acts_90") or []  # fetch_athlete_dataで保存しておく必要あり
+    # 総カロリー・水分量の取得元メモ
+    acts_90     = athlete.get("_acts_90") or []
+    _a_cfg      = athlete  # weight/height/age は athlete dict から参照
 
     rows = []
     prev_weight = None
@@ -56,15 +56,36 @@ def print_calorie_summary(plan, cfg, athlete=None):
         hrv        = float(w.get("hrv") or 0) or None
         rhr        = float(w.get("restingHR") or 0) or None
         sleep_h    = float(w.get("sleepSecs") or 0) / 3600 or None
-        readiness  = w.get("trainingReadiness") or w.get("training_readiness_score")
+        readiness  = (w.get("trainingReadiness") or
+                      w.get("training_readiness_score") or
+                      w.get("icu_training_readiness"))
 
-        # kcal: wellnessフィールド / fallback: その日のアクティビティ消費を合算
-        kcal = float(w.get("kcal") or w.get("activityCalories") or 0) or None
-        if not kcal and acts_90:
-            day_kcal = sum(float(a.get("calories") or 0) for a in acts_90
-                           if a.get("start_date_local","")[:10] == day_str)
-            if day_kcal > 0:
-                kcal = day_kcal
+        # ── 総カロリー計算 (優先順位付き) ─────────────────────────
+        # 1) Garmin 同期 "totalKilocalories"
+        total_kcal = float(w.get("totalKilocalories") or w.get("totalCalories") or 0) or None
+        if not total_kcal:
+            # 2) BMRカロリー + アクティビティカロリー
+            bmr_w  = float(w.get("bmrKilocalories") or w.get("bmrCalories") or 0)
+            act_w  = float(w.get("kcal") or w.get("activityCalories") or 0)
+            if not act_w and acts_90:
+                act_w = sum(float(a.get("calories") or 0) for a in acts_90
+                            if a.get("start_date_local","")[:10] == day_str)
+            if bmr_w > 0 and act_w > 0:
+                total_kcal = bmr_w + act_w
+            elif act_w > 0:
+                # 3) アクティビティkcal + BMR推算
+                _wt  = float(athlete.get("weight", 68.4))
+                _cfg = cfg.get("athlete", {}) if cfg else {}
+                _h   = float(_cfg.get("height_cm", 170))
+                _age = int(_cfg.get("age", 35))
+                _sex = 5 if _cfg.get("gender","male") == "male" else -161
+                _bmr = round(10 * _wt + 6.25 * _h - 5 * _age + _sex)
+                total_kcal = act_w + _bmr
+
+        # ── 水分量 ───────────────────────────────────────────────
+        hydration_ml = float(w.get("hydration") or
+                             w.get("hydrationMilliliters") or
+                             w.get("hydrationIntakeInMilliliters") or 0) or None
 
         # 前日差分
         dw = None
@@ -78,7 +99,9 @@ def print_calorie_summary(plan, cfg, athlete=None):
             "date": day_str, "weight": weight_kg, "dw": dw,
             "hrv": hrv, "dhrv": dhrv,
             "rhr": rhr, "sleep_h": sleep_h,
-            "kcal": kcal, "readiness": readiness,
+            "total_kcal": total_kcal,
+            "hydration_ml": hydration_ml,
+            "readiness": readiness,
         })
         if weight_kg: prev_weight = weight_kg
         if hrv:       prev_hrv    = hrv
@@ -86,28 +109,46 @@ def print_calorie_summary(plan, cfg, athlete=None):
     if not rows:
         return
 
-    print(f"\n{'─'*72}")
+    # 水分データが1件でもあるか判定（列表示の有無に使用）
+    has_hydration = any(r["hydration_ml"] for r in rows)
+
+    print(f"\n{'─'*80}")
     print(f"  📊 過去7日間 ウェルネス実績サマリー (Intervals.icu)")
-    print(f"{'─'*72}")
-    print(f"  {'日付':<12}{'消費kcal':>8}  {'体重':>7}  {'HRV':>6}  {'RHR':>5}  {'睡眠':>5}  {'Readiness'}")
-    print(f"  {'─'*68}")
+    print(f"{'─'*80}")
+    hdr_water = f"{'水分':>6}" if has_hydration else ""
+    print(f"  {'日付':<10}{'総kcal':>8}  {'体重':>10}  {'HRV':>8}  "
+          f"{'RHR':>5}  {'睡眠':>5}  {hdr_water}  {'Readiness'}")
+    print(f"  {'─'*76}")
 
     for r in rows:
-        date_fmt = r["date"][5:]  # MM-DD
-        kcal_str = f"{r['kcal']:.0f}" if r["kcal"] else "  N/A"
-        wt_str   = (f"{r['weight']:.1f}kg" +
-                    (f"({r['dw']:+.1f})" if r["dw"] is not None else "")) if r["weight"] else "  N/A"
-        hrv_str  = (f"{r['hrv']:.0f}" +
-                    (f"({r['dhrv']:+.0f})" if r["dhrv"] is not None else "")) if r["hrv"] else "N/A"
-        rhr_str  = f"{r['rhr']:.0f}" if r["rhr"] else "N/A"
-        sl_str   = f"{r['sleep_h']:.1f}h" if r["sleep_h"] else "N/A"
-        rd_str   = str(int(r["readiness"])) if r["readiness"] else "N/A"
-        print(f"  {date_fmt:<12}{kcal_str:>8}  {wt_str:>10}  {hrv_str:>8}  {rhr_str:>5}  {sl_str:>5}  {rd_str}")
+        date_fmt  = r["date"][5:]  # MM-DD
+        kcal_str  = f"{r['total_kcal']:.0f}" if r["total_kcal"] else "  N/A"
+        wt_str    = (f"{r['weight']:.1f}kg" +
+                     (f"({r['dw']:+.1f})" if r["dw"] is not None else "")) if r["weight"] else "  N/A"
+        hrv_str   = (f"{r['hrv']:.0f}" +
+                     (f"({r['dhrv']:+.0f})" if r["dhrv"] is not None else "")) if r["hrv"] else "N/A"
+        rhr_str   = f"{r['rhr']:.0f}" if r["rhr"] else "N/A"
+        sl_str    = f"{r['sleep_h']:.1f}h" if r["sleep_h"] else "N/A"
+        water_str = (f"{r['hydration_ml']/1000:.1f}L" if r["hydration_ml"] else " N/A") if has_hydration else ""
+        rd_val    = r["readiness"]
+        if rd_val is not None:
+            rd_int = int(float(rd_val))
+            # Readiness 色分け（テキスト絵文字）
+            rd_icon = ("🟢" if rd_int >= 67 else "🟡" if rd_int >= 34 else "🔴")
+            rd_str  = f"{rd_icon}{rd_int}"
+        else:
+            rd_str = "N/A"
+        water_col = f"{water_str:>6}  " if has_hydration else ""
+        print(f"  {date_fmt:<10}{kcal_str:>8}  {wt_str:>10}  {hrv_str:>8}  "
+              f"{rhr_str:>5}  {sl_str:>5}  {water_col}{rd_str}")
 
-    print(f"  {'─'*68}")
-    print(f"  ※ 消費kcalはIntervals.icu記録のアクティビティカロリー")
-    print(f"  ※ Readinessは体重変動・HRV・睡眠の統合指標。50以上で通常練習OK")
-    print(f"{'─'*72}\n")
+    print(f"  {'─'*76}")
+    kcal_src = athlete.get("total_kcal_src", "BMR+アクティビティ")
+    print(f"  ※ 総kcal = BMR + アクティビティ消費カロリー  [{kcal_src}]")
+    if has_hydration:
+        print(f"  ※ 水分: Garmin/Apple Health 同期値")
+    print(f"  ※ Readiness 🟢≥67 通常練習OK  🟡34-66 強度調整  🔴<34 回復優先")
+    print(f"{'─'*80}\n")
 
 
 def print_plan(plan, race_info, cond_info, athlete, goal_targets, cfg=None, today_mode=False, str_prog=None, gcal_days=None, num_days=10):
@@ -222,14 +263,15 @@ def _print_body_comp_status(athlete, str_prog, race_info, cfg=None):
     if cfg is None:
         cfg = {}
     cfg_a = {}
-    weight      = float(athlete.get("weight_kg", 68.4))
-    # 体脂肪率・除脂肪体重 (lbm) をathleteから取得（なければ推定）
+    weight      = float(athlete.get("weight", athlete.get("weight_kg", 68.4)))
+    # 体脂肪率・除脂肪体重 (lbm) をathleteから取得（wellness実測値 → config推定 の順）
     body_fat_pct = float(athlete.get("body_fat_pct") or cfg.get("athlete",{}).get("body_fat_pct", 18.0))
     fat_kg       = weight * body_fat_pct / 100
     lean_kg      = weight - fat_kg   # 除脂肪体重（筋肉+骨+内臓等）
-    # 骨・内臓等(体重の約15%)を除いた推定「骨格筋量」
-    # 除脂肪体重の約55%が骨格筋（成人男性平均）
-    estimated_muscle = lean_kg * 0.55
+    # 骨格筋量: Garmin/Withings 実測値を優先、なければ除脂肪体重×0.55 で推算
+    _measured_muscle = athlete.get("muscle_mass_kg")  # fetch_athlete_data で取得
+    estimated_muscle = float(_measured_muscle) if _measured_muscle else lean_kg * 0.55
+    _muscle_src = "実測" if _measured_muscle else "推算(除脂肪×0.55)"
 
     goal_muscle  = float(str_prog.get("goal_muscle_kg") or 0)
     goal_date    = str_prog.get("goal_date","")
@@ -241,9 +283,16 @@ def _print_body_comp_status(athlete, str_prog, race_info, cfg=None):
     a_race_date = a_race["date"] if a_race else ""
     weeks_to_a  = race_info.get("weeks_to_race", 0)
 
+    # Readiness があれば体組成の横に表示
+    _readiness = athlete.get("readiness")
+    _rd_str    = (f"  Readiness:{int(_readiness)}/100" if _readiness is not None else "")
+    _hydration = athlete.get("hydration_ml")
+    _hy_str    = (f"  水分:{_hydration/1000:.1f}L" if _hydration else "")
+
     print(f"\n  ─── 体組成ステータス ───")
-    print(f"  現在  体重:{weight:.1f}kg  推定骨格筋量:{estimated_muscle:.1f}kg  "
-          f"体脂肪:{body_fat_pct:.0f}%({fat_kg:.1f}kg)  除脂肪:{lean_kg:.1f}kg")
+    print(f"  現在  体重:{weight:.1f}kg  骨格筋量:{estimated_muscle:.1f}kg[{_muscle_src}]  "
+          f"体脂肪:{body_fat_pct:.0f}%({fat_kg:.1f}kg)  除脂肪:{lean_kg:.1f}kg"
+          f"{_rd_str}{_hy_str}")
 
     if goal_muscle > 0:
         gap = goal_muscle - estimated_muscle
