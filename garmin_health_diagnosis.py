@@ -90,7 +90,7 @@ def _init_garmin(email: str, password: str):
     token_dir = Path.home() / ".garminconnect"
     token_str = str(token_dir)   # garminconnect は str を要求 (WindowsPath 不可)
 
-    # 1) トークンキャッシュで試みる
+    # トークンキャッシュで試みる
     if token_dir.exists():
         try:
             garmin = Garmin()
@@ -98,22 +98,21 @@ def _init_garmin(email: str, password: str):
             return garmin
         except Exception:
             pass
-        # キャッシュ破損 → 削除して再ログイン
+        # キャッシュ破損 → 削除
         try:
             import shutil
             shutil.rmtree(token_dir)
         except Exception:
             pass
 
-    # 2) メール/パスワードで新規ログイン (初回 or キャッシュ削除後)
-    try:
-        garmin = Garmin(email=email, password=password)
-        garmin.login()
-        token_dir.mkdir(parents=True, exist_ok=True)
-        garmin.garth.dump(token_str)
-        return garmin
-    except Exception as e:
-        raise RuntimeError(f"Garmin Connect 認証失敗: {e}")
+    # トークンなし → 対話的セットアップが必要
+    raise RuntimeError(
+        "Garmin Connect トークンが未設定です。\n"
+        "以下を VS Code ターミナルで一度だけ実行してください:\n\n"
+        "  python garmin_token_setup.py\n\n"
+        "MFAコードの入力が求められたら Garmin メールに届いたコードを入力してください。\n"
+        "セットアップ後は自動ログインが有効になります。"
+    )
 
 
 def _safe(d: dict, *keys, default=None):
