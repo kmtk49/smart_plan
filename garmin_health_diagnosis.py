@@ -88,15 +88,28 @@ def _init_garmin(email: str, password: str):
             "を実行してください。"
         )
     token_dir = Path.home() / ".garminconnect"
+    # 1) トークンキャッシュで試みる
     try:
         garmin = Garmin()
         garmin.login(token_dir)
         return garmin
+    except (AssertionError, Exception):
+        pass
+    # 2) キャッシュが壊れている場合はクリアしてメール/パスワードで再ログイン
+    try:
+        import shutil
+        if token_dir.exists():
+            shutil.rmtree(token_dir)
     except Exception:
+        pass
+    try:
         garmin = Garmin(email=email, password=password)
         garmin.login()
+        token_dir.mkdir(parents=True, exist_ok=True)
         garmin.garth.dump(token_dir)
         return garmin
+    except Exception as e:
+        raise RuntimeError(f"Garmin Connect 認証失敗: {e}")
 
 
 def _safe(d: dict, *keys, default=None):
