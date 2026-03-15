@@ -90,13 +90,12 @@ def _init_garmin(email: str, password: str):
     token_dir = Path.home() / ".garminconnect"
     token_str = str(token_dir)
 
-    # garth でトークンをロード → Garmin インスタンスに注入
+    # garth でトークンをロード → garminconnect の標準 login() で display_name を設定
     if token_dir.exists():
         try:
-            import garth as _garth
-            _garth.resume(token_str)          # garth でトークン読み込み
+            # garth.save() で保存したトークンは str パスで login() に渡す
             garmin = Garmin()
-            garmin.garth = _garth.client      # garth セッションを注入
+            garmin.login(token_str)           # display_name も自動設定される
             return garmin
         except Exception:
             pass
