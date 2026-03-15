@@ -43,9 +43,25 @@ def print_calorie_summary(plan, cfg, athlete=None):
     acts_90     = athlete.get("_acts_90") or []
     _a_cfg      = athlete  # weight/height/age は athlete dict から参照
 
+    # ── アクティビティ別消費kcal を日付別に集計 (グリコーゲン推算用) ──
+    _act_kcal_by_day = {}
+    for a in acts_90:
+        d = (a.get("start_date_local") or a.get("start_date",""))[:10]
+        if d:
+            _act_kcal_by_day[d] = _act_kcal_by_day.get(d, 0.0) + float(a.get("calories") or 0)
+
     rows = []
-    prev_weight = None
-    prev_hrv    = None
+    prev_weight    = None
+    prev_hrv       = None
+    prev_hydration = None
+    # グリコーゲン推算の初期状態 (85%: 通常の休養後)
+    # モデル根拠: Bergström & Hultman 1966, Coyle 1992
+    #   最大容量: ~400g (1600kcal相当, 競技トレーニング済み男性)
+    #   消費係数: アクティビティkcal × 0.55 (混合強度での糖質利用率)
+    #   回復係数: 睡眠1時間あたり最大値の約7%回復 (十分な糖質摂取前提)
+    _GLYCOGEN_MAX_KCAL = 1600.0
+    glycogen_pct = 85.0
+
     for day_str in week_days:
         w = well_map.get(day_str, {})
         if not w:
@@ -67,9 +83,8 @@ def print_calorie_summary(plan, cfg, athlete=None):
             # 2) BMRカロリー + アクティビティカロリー
             bmr_w  = float(w.get("bmrKilocalories") or w.get("bmrCalories") or 0)
             act_w  = float(w.get("kcal") or w.get("activityCalories") or 0)
-            if not act_w and acts_90:
-                act_w = sum(float(a.get("calories") or 0) for a in acts_90
-                            if a.get("start_date_local","")[:10] == day_str)
+            if not act_w:
+                act_w = _act_kcal_by_day.get(day_str, 0.0)
             if bmr_w > 0 and act_w > 0:
                 total_kcal = bmr_w + act_w
             elif act_w > 0:
@@ -87,24 +102,39 @@ def print_calorie_summary(plan, cfg, athlete=None):
                              w.get("hydrationMilliliters") or
                              w.get("hydrationIntakeInMilliliters") or 0) or None
 
+        # ── グリコーゲン推算 (running state) ─────────────────────
+        # その日のアクティビティ消費 (wellness["kcal"] or acts集計)
+        _day_act_kcal = (float(w.get("kcal") or w.get("activityCalories") or 0)
+                         or _act_kcal_by_day.get(day_str, 0.0))
+        # 消費: アクティビティkcal の55%がグリコーゲン由来 (混合強度の平均)
+        depletion_pct = (_day_act_kcal * 0.55 / _GLYCOGEN_MAX_KCAL) * 100
+        # 翌朝の回復: 不足分の50%を上限、かつ睡眠1hあたり最大5.5% 回復
+        #   例) 1100kcal 消費(depletion 37.8%) + 7h睡眠
+        #       → min(37.8×0.5, 7×5.5) = min(18.9, 38.5) = 18.9% 回復
+        #       → 差し引き -18.9% (翌朝はやや低い)
+        _sl           = sleep_h or 7.0
+        deficit_after = 100.0 - (glycogen_pct - depletion_pct)
+        recovery_pct  = min(deficit_after * 0.5, _sl * 5.5)
+        glycogen_pct  = max(10.0, min(100.0,
+                            glycogen_pct - depletion_pct + recovery_pct))
+
         # 前日差分
-        dw = None
-        if weight_kg and prev_weight:
-            dw = weight_kg - prev_weight
-        dhrv = None
-        if hrv and prev_hrv:
-            dhrv = hrv - prev_hrv
+        dw  = (weight_kg  - prev_weight)    if (weight_kg    and prev_weight)    else None
+        dhrv= (hrv        - prev_hrv)       if (hrv          and prev_hrv)       else None
+        dh  = (hydration_ml - prev_hydration) if (hydration_ml and prev_hydration) else None
 
         rows.append({
             "date": day_str, "weight": weight_kg, "dw": dw,
             "hrv": hrv, "dhrv": dhrv,
             "rhr": rhr, "sleep_h": sleep_h,
             "total_kcal": total_kcal,
-            "hydration_ml": hydration_ml,
+            "hydration_ml": hydration_ml, "dh": dh,
             "readiness": readiness,
+            "glycogen_pct": round(glycogen_pct),
         })
-        if weight_kg: prev_weight = weight_kg
-        if hrv:       prev_hrv    = hrv
+        if weight_kg:    prev_weight    = weight_kg
+        if hrv:          prev_hrv       = hrv
+        if hydration_ml: prev_hydration = hydration_ml
 
     if not rows:
         return
@@ -112,43 +142,63 @@ def print_calorie_summary(plan, cfg, athlete=None):
     # 水分データが1件でもあるか判定（列表示の有無に使用）
     has_hydration = any(r["hydration_ml"] for r in rows)
 
-    print(f"\n{'─'*80}")
+    W = 96  # テーブル幅
+    print(f"\n{'─'*W}")
     print(f"  📊 過去7日間 ウェルネス実績サマリー (Intervals.icu)")
-    print(f"{'─'*80}")
-    hdr_water = f"{'水分':>6}" if has_hydration else ""
-    print(f"  {'日付':<10}{'総kcal':>8}  {'体重':>10}  {'HRV':>8}  "
-          f"{'RHR':>5}  {'睡眠':>5}  {hdr_water}  {'Readiness'}")
-    print(f"  {'─'*76}")
+    print(f"{'─'*W}")
+    hdr_water = f"{'水分(±)':>12}" if has_hydration else ""
+    print(f"  {'日付':<10}{'総kcal':>8}  {'体重(±)':>12}  {'HRV(±)':>8}  "
+          f"{'RHR':>4}  {'睡眠':>5}  {hdr_water}  {'Readiness':>9}  {'グリコ':>6}")
+    print(f"  {'─'*W}")
 
     for r in rows:
-        date_fmt  = r["date"][5:]  # MM-DD
-        kcal_str  = f"{r['total_kcal']:.0f}" if r["total_kcal"] else "  N/A"
-        wt_str    = (f"{r['weight']:.1f}kg" +
-                     (f"({r['dw']:+.1f})" if r["dw"] is not None else "")) if r["weight"] else "  N/A"
-        hrv_str   = (f"{r['hrv']:.0f}" +
-                     (f"({r['dhrv']:+.0f})" if r["dhrv"] is not None else "")) if r["hrv"] else "N/A"
-        rhr_str   = f"{r['rhr']:.0f}" if r["rhr"] else "N/A"
+        date_fmt  = r["date"][5:]
+        kcal_str  = f"{r['total_kcal']:.0f}" if r["total_kcal"] else "N/A"
+        wt_str    = (f"{r['weight']:.1f}kg"
+                     + (f"({r['dw']:+.1f})" if r["dw"] is not None else "")) if r["weight"] else "N/A"
+        hrv_str   = (f"{r['hrv']:.0f}"
+                     + (f"({r['dhrv']:+.0f})" if r["dhrv"] is not None else "")) if r["hrv"] else "N/A"
+        rhr_str   = f"{r['rhr']:.0f}"  if r["rhr"]   else "N/A"
         sl_str    = f"{r['sleep_h']:.1f}h" if r["sleep_h"] else "N/A"
-        water_str = (f"{r['hydration_ml']/1000:.1f}L" if r["hydration_ml"] else " N/A") if has_hydration else ""
-        rd_val    = r["readiness"]
+
+        # 水分: L表示 + 前日差分 (mL単位)
+        if has_hydration:
+            if r["hydration_ml"]:
+                _hl = r["hydration_ml"] / 1000
+                _dh_str = (f"({r['dh']:+.0f}mL)" if r["dh"] is not None else "")
+                water_str = f"{_hl:.1f}L{_dh_str}"
+            else:
+                water_str = "N/A"
+        else:
+            water_str = ""
+
+        # Readiness
+        rd_val = r["readiness"]
         if rd_val is not None:
-            rd_int = int(float(rd_val))
-            # Readiness 色分け（テキスト絵文字）
-            rd_icon = ("🟢" if rd_int >= 67 else "🟡" if rd_int >= 34 else "🔴")
+            rd_int  = int(float(rd_val))
+            rd_icon = "🟢" if rd_int >= 67 else ("🟡" if rd_int >= 34 else "🔴")
             rd_str  = f"{rd_icon}{rd_int}"
         else:
             rd_str = "N/A"
-        water_col = f"{water_str:>6}  " if has_hydration else ""
-        print(f"  {date_fmt:<10}{kcal_str:>8}  {wt_str:>10}  {hrv_str:>8}  "
-              f"{rhr_str:>5}  {sl_str:>5}  {water_col}{rd_str}")
 
-    print(f"  {'─'*76}")
+        # グリコーゲン
+        gp      = r["glycogen_pct"]
+        gp_icon = "🟢" if gp >= 75 else ("🟡" if gp >= 50 else "🔴")
+        gp_str  = f"{gp_icon}{gp}%"
+
+        water_col = f"{water_str:>12}  " if has_hydration else ""
+        print(f"  {date_fmt:<10}{kcal_str:>8}  {wt_str:>12}  {hrv_str:>8}  "
+              f"{rhr_str:>4}  {sl_str:>5}  {water_col}{rd_str:>9}  {gp_str:>6}")
+
+    print(f"  {'─'*W}")
     kcal_src = athlete.get("total_kcal_src", "BMR+アクティビティ")
-    print(f"  ※ 総kcal = BMR + アクティビティ消費カロリー  [{kcal_src}]")
+    print(f"  ※ 総kcal = BMR + アクティビティ消費  [{kcal_src}]")
     if has_hydration:
-        print(f"  ※ 水分: Garmin/Apple Health 同期値")
-    print(f"  ※ Readiness 🟢≥67 通常練習OK  🟡34-66 強度調整  🔴<34 回復優先")
-    print(f"{'─'*80}\n")
+        print(f"  ※ 水分(±): 前日比 mL差  [Garmin/Apple Health 同期値]")
+    print(f"  ※ グリコーゲン推算: 運動消費×0.55÷1600kcal基準 | 睡眠で回復  "
+          f"🟢≥75% 充分  🟡50-74% やや不足  🔴<50% 要補給(糖質60-90g)")
+    print(f"  ※ Readiness 🟢≥67 通常OK  🟡34-66 強度調整  🔴<34 回復優先")
+    print(f"{'─'*W}\n")
 
 
 def print_plan(plan, race_info, cond_info, athlete, goal_targets, cfg=None, today_mode=False, str_prog=None, gcal_days=None, num_days=10):
