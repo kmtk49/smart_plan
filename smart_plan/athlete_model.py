@@ -251,48 +251,6 @@ def fetch_athlete_data(cfg):
                          latest.get("hydrationMilliliters") or
                          latest.get("hydrationIntakeInMilliliters") or 0) or None
 
-    # ── Garmin Connect 直接取得 (Readiness / Body Battery / 水分量) ───────
-    # Intervals.icu の wellness API は trainingReadiness を同期しないため
-    # garminconnect ライブラリ経由で Garmin Connect から直接取得する。
-    _g_cfg = cfg.get("garmin", {})
-    if _g_cfg.get("email"):
-        try:
-            import sys as _sys
-            _sys.path.insert(0, str(Path(__file__).parent.parent))
-            from garmin_health_diagnosis import (fetch_garmin_health,
-                                                  _parse_readiness,
-                                                  _parse_body_battery,
-                                                  _parse_hydration)
-            print("  📡 Garmin Connect から Readiness / 水分量を取得中...")
-            _gh = fetch_garmin_health(
-                _g_cfg["email"],
-                _g_cfg.get("password", ""),
-                days_back=1,
-            )
-            # Readiness
-            _rd = _parse_readiness(_gh["today"].get("readiness"))
-            if _rd.get("score") is not None:
-                readiness = float(_rd["score"])
-                print(f"     ✅ Readiness={readiness:.0f}/100  [{_rd.get('level','')}]"
-                      + (f"  ({_rd['feedback']})" if _rd.get("feedback") else ""))
-            # 水分量 (Garmin の方が正確)
-            _hy = _parse_hydration(_gh["today"].get("hydration"))
-            if _hy.get("intake_ml"):
-                hydration_ml = float(_hy["intake_ml"])
-                print(f"     💧 水分={hydration_ml/1000:.2f}L (Garmin Connect 直接)")
-            # Body Battery (情報表示のみ)
-            _bb = _parse_body_battery(_gh["today"].get("body_battery"))
-            if _bb.get("current") is not None:
-                print(f"     🔋 Body Battery={_bb['current']}")
-            # 取得エラーがあれば警告
-            for _err in (_gh.get("fetch_errors") or []):
-                print(f"     ⚠️  {_err}")
-        except RuntimeError as _ge:
-            # garminconnect 未インストール
-            print(f"  ⚠️  Garmin Connect スキップ ({_ge})")
-        except Exception as _ge:
-            print(f"  ⚠️  Garmin Connect 取得スキップ: {_ge}")
-
     # ── 総カロリー (totalKilocalories) の取得 ─────────────────────────────
     # 優先順位:
     #   1) Garmin 同期 "totalKilocalories" (BMR + アクティブカロリー合算)
