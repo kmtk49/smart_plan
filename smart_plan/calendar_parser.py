@@ -400,7 +400,7 @@ def build_directive_template(directive, base_phase_template, num_days, start_dat
     weekend = directive.get("weekend_focus", True)
 
     if start_date is None:
-        start_date = date.today() + timedelta(days=1)
+        start_date = date.today()   # 当日朝モード: 当日から計画
 
     # 種目ごとの推奨セッション時間（距離から逆算）
     def est_duration(sport, dist_km):

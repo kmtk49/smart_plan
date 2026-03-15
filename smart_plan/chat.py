@@ -755,7 +755,7 @@ def _generate_plan_from_context(ctx):
 
     cond     = _apply_feeling_to_cond(cond, ctx.get("feeling",""))
     num_days = int(ctx.get("num_days", 10))
-    start    = date.today() + timedelta(days=1)
+    start    = date.today()   # 当日朝モード: 当日から計画
 
     RAW_GCAL_EVENTS = _fetch_gcal_events_auto()
     gcal_days, races_from_cal = parse_gcal_events_to_days(RAW_GCAL_EVENTS, cfg_cal, athlete, cfg)

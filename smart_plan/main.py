@@ -75,7 +75,7 @@ def main():
     gcal_days = apply_trip_adjacency(gcal_days)
     print(f"  ✅ イベント解析完了: {len(RAW_GCAL_EVENTS)}件  レース:{len(races_from_cal)}件")
 
-    start = date.today() + timedelta(days=1)
+    start = date.today()   # 当日朝に体重計測 → 当日から計画
     if args.start: start = date.fromisoformat(args.start)
 
     if args.today:
