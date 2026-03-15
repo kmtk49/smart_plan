@@ -88,25 +88,29 @@ def _init_garmin(email: str, password: str):
             "を実行してください。"
         )
     token_dir = Path.home() / ".garminconnect"
+    token_str = str(token_dir)   # garminconnect は str を要求 (WindowsPath 不可)
+
     # 1) トークンキャッシュで試みる
-    try:
-        garmin = Garmin()
-        garmin.login(token_dir)
-        return garmin
-    except (AssertionError, Exception):
-        pass
-    # 2) キャッシュが壊れている場合はクリアしてメール/パスワードで再ログイン
-    try:
-        import shutil
-        if token_dir.exists():
+    if token_dir.exists():
+        try:
+            garmin = Garmin()
+            garmin.login(token_str)
+            return garmin
+        except Exception:
+            pass
+        # キャッシュ破損 → 削除して再ログイン
+        try:
+            import shutil
             shutil.rmtree(token_dir)
-    except Exception:
-        pass
+        except Exception:
+            pass
+
+    # 2) メール/パスワードで新規ログイン (初回 or キャッシュ削除後)
     try:
         garmin = Garmin(email=email, password=password)
         garmin.login()
         token_dir.mkdir(parents=True, exist_ok=True)
-        garmin.garth.dump(token_dir)
+        garmin.garth.dump(token_str)
         return garmin
     except Exception as e:
         raise RuntimeError(f"Garmin Connect 認証失敗: {e}")
