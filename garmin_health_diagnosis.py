@@ -88,13 +88,15 @@ def _init_garmin(email: str, password: str):
             "を実行してください。"
         )
     token_dir = Path.home() / ".garminconnect"
-    token_str = str(token_dir)   # garminconnect は str を要求 (WindowsPath 不可)
+    token_str = str(token_dir)
 
-    # トークンキャッシュで試みる
+    # garth でトークンをロード → Garmin インスタンスに注入
     if token_dir.exists():
         try:
+            import garth as _garth
+            _garth.resume(token_str)          # garth でトークン読み込み
             garmin = Garmin()
-            garmin.login(token_str)
+            garmin.garth = _garth.client      # garth セッションを注入
             return garmin
         except Exception:
             pass
