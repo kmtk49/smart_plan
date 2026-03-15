@@ -139,16 +139,12 @@ def print_calorie_summary(plan, cfg, athlete=None):
     if not rows:
         return
 
-    # 水分データが1件でもあるか判定（列表示の有無に使用）
-    has_hydration = any(r["hydration_ml"] for r in rows)
-
-    W = 96  # テーブル幅
+    W = 92  # テーブル幅
     print(f"\n{'─'*W}")
     print(f"  📊 過去7日間 ウェルネス実績サマリー (Intervals.icu)")
     print(f"{'─'*W}")
-    hdr_water = f"{'水分(±)':>12}" if has_hydration else ""
     print(f"  {'日付':<10}{'総kcal':>8}  {'体重(±)':>12}  {'HRV(±)':>8}  "
-          f"{'RHR':>4}  {'睡眠':>5}  {hdr_water}  {'Readiness':>9}  {'グリコ':>6}")
+          f"{'RHR':>4}  {'睡眠':>5}  {'水分(±)':>14}  {'グリコ':>6}")
     print(f"  {'─'*W}")
 
     for r in rows:
@@ -161,43 +157,28 @@ def print_calorie_summary(plan, cfg, athlete=None):
         rhr_str   = f"{r['rhr']:.0f}"  if r["rhr"]   else "N/A"
         sl_str    = f"{r['sleep_h']:.1f}h" if r["sleep_h"] else "N/A"
 
-        # 水分: L表示 + 前日差分 (mL単位)
-        if has_hydration:
-            if r["hydration_ml"]:
-                _hl = r["hydration_ml"] / 1000
-                _dh_str = (f"({r['dh']:+.0f}mL)" if r["dh"] is not None else "")
-                water_str = f"{_hl:.1f}L{_dh_str}"
-            else:
-                water_str = "N/A"
+        # 水分: L表示 + 前日差分 (mL単位) — 常に表示（データなし時はN/A）
+        if r["hydration_ml"]:
+            _hl = r["hydration_ml"] / 1000
+            _dh_str = (f"({r['dh']:+.0f}mL)" if r["dh"] is not None else "")
+            water_str = f"{_hl:.1f}L{_dh_str}"
         else:
-            water_str = ""
-
-        # Readiness
-        rd_val = r["readiness"]
-        if rd_val is not None:
-            rd_int  = int(float(rd_val))
-            rd_icon = "🟢" if rd_int >= 67 else ("🟡" if rd_int >= 34 else "🔴")
-            rd_str  = f"{rd_icon}{rd_int}"
-        else:
-            rd_str = "N/A"
+            water_str = "N/A"
 
         # グリコーゲン
         gp      = r["glycogen_pct"]
         gp_icon = "🟢" if gp >= 75 else ("🟡" if gp >= 50 else "🔴")
         gp_str  = f"{gp_icon}{gp}%"
 
-        water_col = f"{water_str:>12}  " if has_hydration else ""
         print(f"  {date_fmt:<10}{kcal_str:>8}  {wt_str:>12}  {hrv_str:>8}  "
-              f"{rhr_str:>4}  {sl_str:>5}  {water_col}{rd_str:>9}  {gp_str:>6}")
+              f"{rhr_str:>4}  {sl_str:>5}  {water_str:>14}  {gp_str:>6}")
 
     print(f"  {'─'*W}")
     kcal_src = athlete.get("total_kcal_src", "BMR+アクティビティ")
     print(f"  ※ 総kcal = BMR + アクティビティ消費  [{kcal_src}]")
-    if has_hydration:
-        print(f"  ※ 水分(±): 前日比 mL差  [Garmin/Apple Health 同期値]")
+    print(f"  ※ 水分(±): 前日比 mL差  [Garmin/Apple Health → Intervals.icu 同期値]")
     print(f"  ※ グリコーゲン推算: 運動消費×0.55÷1600kcal基準 | 睡眠で回復  "
           f"🟢≥75% 充分  🟡50-74% やや不足  🔴<50% 要補給(糖質60-90g)")
-    print(f"  ※ Readiness 🟢≥67 通常OK  🟡34-66 強度調整  🔴<34 回復優先")
     print(f"{'─'*W}\n")
 
 
