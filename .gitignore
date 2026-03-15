@@ -17,6 +17,17 @@ env/
 # 認証情報・APIキーを含む可能性のあるファイル
 config.yaml
 configv10.yaml
+.env
+.env.*
+!.env.example
+
+# Google OAuth トークン
+credentials.json
+token.json
+gtoken.json
+gcal_token.json
+gdrive_token.json
+*_token.json
 
 # データファイル（大容量）
 *.csv
