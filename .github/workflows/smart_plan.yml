@@ -34,6 +34,7 @@ jobs:
         env:
           INTERVALS_ICU_ATHLETE_ID: ${{ secrets.INTERVALS_ICU_ATHLETE_ID }}
           INTERVALS_ICU_API_KEY: ${{ secrets.INTERVALS_ICU_API_KEY }}
+          CI: "true"
         run: |
           MODE="${{ github.event.inputs.mode }}"
           DAYS="${{ github.event.inputs.days }}"
@@ -41,7 +42,7 @@ jobs:
           if [ "$MODE" = "today" ]; then
             python run_smart_plan.py --today
           elif [ "$MODE" = "upload" ]; then
-            python run_smart_plan.py --days "$DAYS" --no-upload
+            python run_smart_plan.py --days "$DAYS" --no-chat
           else
-            python run_smart_plan.py --days "$DAYS" --preview
+            python run_smart_plan.py --days "$DAYS" --preview --no-chat
           fi
