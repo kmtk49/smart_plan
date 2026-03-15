@@ -349,6 +349,49 @@ def _parse_stats(stats_data) -> dict:
     return result
 
 
+def _parse_body_comp(body_comp_data) -> dict:
+    """
+    Garmin get_body_composition() レスポンスから体組成を抽出。
+    Returns: {"body_water_pct": float|None, "muscle_mass_kg": float|None,
+              "bone_mass_kg": float|None, "weight_kg": float|None,
+              "body_fat_pct": float|None}
+    """
+    result = {"body_water_pct": None, "muscle_mass_kg": None,
+              "bone_mass_kg": None, "weight_kg": None, "body_fat_pct": None}
+    if not body_comp_data:
+        return result
+    # dateWeightList 形式 (複数日) → 最新エントリを使用
+    entries = (body_comp_data.get("dateWeightList") or
+               body_comp_data.get("compositionList") or [])
+    if entries and isinstance(entries, list):
+        entry = entries[-1] if isinstance(entries[-1], dict) else {}
+    elif isinstance(body_comp_data, dict):
+        entry = body_comp_data
+    else:
+        return result
+    # 体内水分量% (Garmin API: bodyWaterPercentage)
+    bw = (entry.get("bodyWaterPercentage") or
+          entry.get("bodyWater") or
+          entry.get("waterPercentage"))
+    result["body_water_pct"] = float(bw) if bw is not None else None
+    # 体重 (grams → kg)
+    wt = entry.get("weight") or entry.get("totalWeightKg")
+    if wt:
+        result["weight_kg"] = float(wt) / 1000 if float(wt) > 500 else float(wt)
+    # 体脂肪%
+    bf = entry.get("bodyFatPercentage") or entry.get("bodyFat")
+    result["body_fat_pct"] = float(bf) if bf is not None else None
+    # 骨格筋量 (grams → kg)
+    mm = entry.get("muscleMassInGrams") or entry.get("muscleMass")
+    if mm:
+        result["muscle_mass_kg"] = float(mm) / 1000 if float(mm) > 500 else float(mm)
+    # 骨量 (grams → kg)
+    bm = entry.get("boneMassInGrams") or entry.get("boneMass")
+    if bm:
+        result["bone_mass_kg"] = float(bm) / 1000 if float(bm) > 500 else float(bm)
+    return result
+
+
 def _parse_hydration(hydration_data) -> dict:
     """水分摂取データ"""
     result = {"intake_ml": None, "goal_ml": None, "pct": None}

@@ -53,7 +53,7 @@ def print_calorie_summary(plan, cfg, athlete=None):
     rows = []
     prev_weight    = None
     prev_hrv       = None
-    prev_hydration = None
+    prev_hydration = None   # 体内水分% 前日値
     # グリコーゲン推算の初期状態 (85%: 通常の休養後)
     # モデル根拠: Bergström & Hultman 1966, Coyle 1992
     #   最大容量: ~400g (1600kcal相当, 競技トレーニング済み男性)
@@ -97,11 +97,13 @@ def print_calorie_summary(plan, cfg, athlete=None):
                 _bmr = round(10 * _wt + 6.25 * _h - 5 * _age + _sex)
                 total_kcal = act_w + _bmr
 
-        # ── 水分量 (hydrationVolume が正しいフィールド名) ────────
-        hydration_ml = float(w.get("hydrationVolume") or
-                             w.get("hydration") or
-                             w.get("hydrationMilliliters") or
-                             w.get("hydrationIntakeInMilliliters") or 0) or None
+        # ── 体内水分% / 水分摂取量 ────────────────────────────────
+        # Intervals.icu wellness の "hydration" は体内水分% (Garmin Index スケール同期)
+        # 未同期時は None → Garmin Connect 直接取得値で補完 (athlete["body_water_pct"])
+        hydration_pct = float(w.get("hydration") or 0) or None
+        hydration_ml  = float(w.get("hydrationVolume") or
+                              w.get("hydrationMilliliters") or
+                              w.get("hydrationIntakeInMilliliters") or 0) or None
 
         # ── グリコーゲン推算 (running state) ─────────────────────
         # その日のアクティビティ消費 (wellness["kcal"] or acts集計)
@@ -120,32 +122,44 @@ def print_calorie_summary(plan, cfg, athlete=None):
                             glycogen_pct - depletion_pct + recovery_pct))
 
         # 前日差分
-        dw  = (weight_kg  - prev_weight)    if (weight_kg    and prev_weight)    else None
-        dhrv= (hrv        - prev_hrv)       if (hrv          and prev_hrv)       else None
-        dh  = (hydration_ml - prev_hydration) if (hydration_ml and prev_hydration) else None
+        dw   = (weight_kg      - prev_weight)   if (weight_kg      and prev_weight)   else None
+        dhrv = (hrv            - prev_hrv)      if (hrv            and prev_hrv)      else None
+        dh   = (hydration_pct  - prev_hydration)if (hydration_pct  and prev_hydration)else None
 
         rows.append({
             "date": day_str, "weight": weight_kg, "dw": dw,
             "hrv": hrv, "dhrv": dhrv,
             "rhr": rhr, "sleep_h": sleep_h,
             "total_kcal": total_kcal,
-            "hydration_ml": hydration_ml, "dh": dh,
+            "hydration_pct": hydration_pct, "dh": dh,
             "readiness": readiness,
             "glycogen_pct": round(glycogen_pct),
         })
-        if weight_kg:    prev_weight    = weight_kg
-        if hrv:          prev_hrv       = hrv
-        if hydration_ml: prev_hydration = hydration_ml
+        if weight_kg:     prev_weight    = weight_kg
+        if hrv:           prev_hrv       = hrv
+        if hydration_pct: prev_hydration = hydration_pct
 
     if not rows:
         return
 
+    # 今日の Garmin Connect 直接取得値（体内水分%）で最新行を補完
+    _today_bw = athlete.get("body_water_pct") if athlete else None
+    if _today_bw is not None and rows:
+        last = rows[-1]
+        if last["hydration_pct"] is None:
+            _prev_bw = rows[-2]["hydration_pct"] if len(rows) >= 2 else None
+            last["hydration_pct"] = _today_bw
+            last["dh"] = (_today_bw - _prev_bw) if _prev_bw else None
+
+    has_water = any(r["hydration_pct"] for r in rows)
+
     W = 92  # テーブル幅
     print(f"\n{'─'*W}")
-    print(f"  📊 過去7日間 ウェルネス実績サマリー (Intervals.icu)")
+    print(f"  📊 過去7日間 ウェルネス実績サマリー (Intervals.icu + Garmin Connect)")
     print(f"{'─'*W}")
+    hdr_w = f"{'体内水分%(±)':>12}" if has_water else ""
     print(f"  {'日付':<10}{'総kcal':>8}  {'体重(±)':>12}  {'HRV(±)':>8}  "
-          f"{'RHR':>4}  {'睡眠':>5}  {'水分(±)':>14}  {'グリコ':>6}")
+          f"{'RHR':>4}  {'睡眠':>5}  {hdr_w}  {'グリコ':>6}")
     print(f"  {'─'*W}")
 
     for r in rows:
@@ -158,13 +172,16 @@ def print_calorie_summary(plan, cfg, athlete=None):
         rhr_str   = f"{r['rhr']:.0f}"  if r["rhr"]   else "N/A"
         sl_str    = f"{r['sleep_h']:.1f}h" if r["sleep_h"] else "N/A"
 
-        # 水分: L表示 + 前日差分 (mL単位) — 常に表示（データなし時はN/A）
-        if r["hydration_ml"]:
-            _hl = r["hydration_ml"] / 1000
-            _dh_str = (f"({r['dh']:+.0f}mL)" if r["dh"] is not None else "")
-            water_str = f"{_hl:.1f}L{_dh_str}"
+        # 体内水分%: XX.X%(±Y.Ypp) 形式
+        if has_water:
+            if r["hydration_pct"]:
+                _dh_str = (f"({r['dh']:+.1f}pp)" if r["dh"] is not None else "")
+                water_str = f"{r['hydration_pct']:.1f}%{_dh_str}"
+            else:
+                water_str = "N/A"
+            water_col = f"{water_str:>12}  "
         else:
-            water_str = "N/A"
+            water_col = ""
 
         # グリコーゲン
         gp      = r["glycogen_pct"]
@@ -172,12 +189,13 @@ def print_calorie_summary(plan, cfg, athlete=None):
         gp_str  = f"{gp_icon}{gp}%"
 
         print(f"  {date_fmt:<10}{kcal_str:>8}  {wt_str:>12}  {hrv_str:>8}  "
-              f"{rhr_str:>4}  {sl_str:>5}  {water_str:>14}  {gp_str:>6}")
+              f"{rhr_str:>4}  {sl_str:>5}  {water_col}{gp_str:>6}")
 
     print(f"  {'─'*W}")
-    kcal_src = athlete.get("total_kcal_src", "BMR+アクティビティ")
+    kcal_src = athlete.get("total_kcal_src", "BMR+アクティビティ") if athlete else ""
     print(f"  ※ 総kcal = BMR + アクティビティ消費  [{kcal_src}]")
-    print(f"  ※ 水分(±): 前日比 mL差  [Garmin/Apple Health → Intervals.icu 同期値]")
+    if has_water:
+        print(f"  ※ 体内水分%(±pp): Garmin Index スケール → Garmin Connect 直接取得  前日差(percentage point)")
     print(f"  ※ グリコーゲン推算: 運動消費×0.55÷1600kcal基準 | 睡眠で回復  "
           f"🟢≥75% 充分  🟡50-74% やや不足  🔴<50% 要補給(糖質60-90g)")
     print(f"{'─'*W}\n")
