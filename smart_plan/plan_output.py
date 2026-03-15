@@ -142,32 +142,37 @@ def print_calorie_summary(plan, cfg, athlete=None):
     if not rows:
         return
 
-    # Garmin Connect 履歴で各日の体内水分% を補完
-    _bw_hist = (athlete.get("garmin_body_water_history") or {}) if athlete else {}
+    # Garmin Connect 履歴で各日の体内水分% / Readiness を補完
+    _bw_hist  = (athlete.get("garmin_body_water_history") or {}) if athlete else {}
+    _rd_hist  = (athlete.get("garmin_readiness_history")  or {}) if athlete else {}
     _bw_hist_prev = None
     for r in rows:
+        # 体内水分%
         if r["hydration_pct"] is None and r["date"] in _bw_hist:
             r["hydration_pct"] = _bw_hist[r["date"]]
-        # 今日の直接取得値でも補完
         if r["hydration_pct"] is None and r["date"] == rows[-1]["date"]:
             _today_bw = athlete.get("body_water_pct") if athlete else None
             if _today_bw is not None:
                 r["hydration_pct"] = _today_bw
-        # 差分を再計算
         if r["hydration_pct"] is not None and _bw_hist_prev is not None:
             r["dh"] = r["hydration_pct"] - _bw_hist_prev
         if r["hydration_pct"] is not None:
             _bw_hist_prev = r["hydration_pct"]
+        # Readiness (Garmin Connect 履歴で上書き)
+        if r["date"] in _rd_hist:
+            r["readiness"] = _rd_hist[r["date"]]
 
-    has_water = any(r["hydration_pct"] for r in rows)
+    has_water    = any(r["hydration_pct"] for r in rows)
+    has_readiness= any(r["readiness"]     for r in rows)
 
-    W = 92  # テーブル幅
+    W = 100  # テーブル幅
     print(f"\n{'─'*W}")
     print(f"  📊 過去7日間 ウェルネス実績サマリー (Intervals.icu + Garmin Connect)")
     print(f"{'─'*W}")
-    hdr_w = f"{'体内水分%(±)':>12}" if has_water else ""
+    hdr_w  = f"{'体内水分%(±)':>13}" if has_water    else ""
+    hdr_rd = f"{'Readiness':>9}"     if has_readiness else ""
     print(f"  {'日付':<10}{'総kcal':>8}  {'体重(±)':>12}  {'HRV(±)':>8}  "
-          f"{'RHR':>4}  {'睡眠':>5}  {hdr_w}  {'グリコ':>6}")
+          f"{'RHR':>4}  {'睡眠':>5}  {hdr_w}  {hdr_rd}  {'グリコ':>6}")
     print(f"  {'─'*W}")
 
     for r in rows:
@@ -180,16 +185,29 @@ def print_calorie_summary(plan, cfg, athlete=None):
         rhr_str   = f"{r['rhr']:.0f}"  if r["rhr"]   else "N/A"
         sl_str    = f"{r['sleep_h']:.1f}h" if r["sleep_h"] else "N/A"
 
-        # 体内水分%: XX.X%(±Y.Ypp) 形式
+        # 体内水分%
         if has_water:
             if r["hydration_pct"]:
                 _dh_str = (f"({r['dh']:+.1f}pp)" if r["dh"] is not None else "")
                 water_str = f"{r['hydration_pct']:.1f}%{_dh_str}"
             else:
                 water_str = "N/A"
-            water_col = f"{water_str:>12}  "
+            water_col = f"{water_str:>13}  "
         else:
             water_col = ""
+
+        # Readiness (Garmin Connect スコア)
+        if has_readiness:
+            rd_val = r["readiness"]
+            if rd_val is not None:
+                rd_int  = int(float(rd_val))
+                rd_icon = "🟢" if rd_int >= 67 else ("🟡" if rd_int >= 34 else "🔴")
+                rd_str  = f"{rd_icon}{rd_int}"
+            else:
+                rd_str = "N/A"
+            rd_col = f"{rd_str:>9}  "
+        else:
+            rd_col = ""
 
         # グリコーゲン
         gp      = r["glycogen_pct"]
@@ -197,13 +215,15 @@ def print_calorie_summary(plan, cfg, athlete=None):
         gp_str  = f"{gp_icon}{gp}%"
 
         print(f"  {date_fmt:<10}{kcal_str:>8}  {wt_str:>12}  {hrv_str:>8}  "
-              f"{rhr_str:>4}  {sl_str:>5}  {water_col}{gp_str:>6}")
+              f"{rhr_str:>4}  {sl_str:>5}  {water_col}{rd_col}{gp_str:>6}")
 
     print(f"  {'─'*W}")
     kcal_src = athlete.get("total_kcal_src", "BMR+アクティビティ") if athlete else ""
     print(f"  ※ 総kcal = BMR + アクティビティ消費  [{kcal_src}]")
     if has_water:
-        print(f"  ※ 体内水分%(±pp): Garmin Index スケール → Garmin Connect 直接取得  前日差(percentage point)")
+        print(f"  ※ 体内水分%(±pp): Garmin Index スケール → Garmin Connect  前日差(pp)")
+    if has_readiness:
+        print(f"  ※ Readiness: Garmin Connect 直接取得  🟢≥67 通常  🟡34-66 調整  🔴<34 回復優先")
     print(f"  ※ グリコーゲン推算: 運動消費×0.55÷1600kcal基準 | 睡眠で回復  "
           f"🟢≥75% 充分  🟡50-74% やや不足  🔴<50% 要補給(糖質60-90g)")
     print(f"{'─'*W}\n")
