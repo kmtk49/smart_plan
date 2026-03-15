@@ -25,9 +25,25 @@ from .workout_builder import build_workout
 #     "no.target"
 # ============================================================
 
-def _garmin_step(step_type, duration_type, duration_val, target_type="no.target",
-                 target_low=None, target_high=None, order=1, desc=""):
-    """Garmin Connect ワークアウトステップ辞書を生成"""
+def _garmin_step(step_type, duration_type="time", duration_val=0, target_type="no.target",
+                 target_low=None, target_high=None, order=1, desc="",
+                 exercise_name=None, exercise_category=None):
+    """Garmin Connect ワークアウトステップ辞書を生成
+
+    duration_type:
+        "time"        → duration_val は秒数
+        "distance"    → duration_val はメートル
+        "repetitions" → duration_val はレップ数 (筋トレ用)
+        "lap.button"  → duration_val は無視
+    exercise_name:     Garmin に表示する種目名 (30文字以内推奨)
+    exercise_category: "STRENGTH" / "CARDIO" / "YOGA" / "PILATES" / "HIIT"
+    """
+    _cond_id_map = {
+        "lap.button":  1,
+        "time":        2,
+        "distance":    3,
+        "repetitions": 3,   # strength_training context では reps として解釈
+    }
     step = {
         "type": "ExecutableStepDTO",
         "stepId": None,
@@ -36,10 +52,11 @@ def _garmin_step(step_type, duration_type, duration_val, target_type="no.target"
             "warmup": 1, "cooldown": 2, "interval": 3, "recovery": 4, "rest": 5
         }.get(step_type, 3), "stepTypeKey": step_type},
         "childStepId": None,
-        "description": desc,
-        "endCondition": {"conditionTypeId": {
-            "time": 2, "distance": 3, "lap.button": 1
-        }.get(duration_type, 2), "conditionTypeKey": duration_type},
+        "description": desc[:30] if desc else "",   # デバイス表示上限 30文字
+        "endCondition": {
+            "conditionTypeId": _cond_id_map.get(duration_type, 2),
+            "conditionTypeKey": duration_type,
+        },
         "endConditionValue": duration_val,
         "preferredEndConditionUnit": None,
         "endConditionCompare": None,
@@ -55,6 +72,11 @@ def _garmin_step(step_type, duration_type, duration_val, target_type="no.target"
         "targetValueTwo": target_high,
         "zoneNumber": None,
     }
+    # 筋トレ・ヨガ系の種目メタデータ (存在する場合のみ追加)
+    if exercise_name:
+        step["exerciseName"] = exercise_name[:30]
+    if exercise_category:
+        step["exerciseCategory"] = exercise_category
     return step
 
 def _garmin_repeat(steps, iterations, order=1):
@@ -71,6 +93,91 @@ def _garmin_repeat(steps, iterations, order=1):
         "endConditionValue": iterations,
         "workoutSteps": steps,
     }
+
+def _parse_reps_or_time(reps_str):
+    """STRENGTH_DB / HIIT_DB などの reps 文字列を (conditionTypeKey, value) に変換。
+
+    例:
+        "45秒"    → ("time", 45)
+        "3分"     → ("time", 180)
+        "1分30秒" → ("time", 90)
+        "15回"    → ("repetitions", 15)
+        "30秒/側" → ("time", 30)   ← 片側ずつ表示用 (片側値を返す)
+        "20歩/側" → ("repetitions", 20)
+    """
+    import re
+    s = str(reps_str).strip()
+    # X分Y秒
+    m = re.match(r'(\d+)分(\d+)秒', s)
+    if m:
+        return "time", int(m.group(1)) * 60 + int(m.group(2))
+    # X分
+    m = re.match(r'(\d+)分', s)
+    if m:
+        return "time", int(m.group(1)) * 60
+    # X秒 (X秒/側 を含む)
+    m = re.match(r'(\d+)秒', s)
+    if m:
+        return "time", int(m.group(1))
+    # X回 (X回/側 を含む)
+    m = re.match(r'(\d+)回', s)
+    if m:
+        return "repetitions", int(m.group(1))
+    # X歩 など
+    m = re.match(r'(\d+)', s)
+    if m:
+        return "repetitions", int(m.group(1))
+    return "time", 30  # fallback
+
+
+def _build_exercise_steps(db_entries, category, order_start=1):
+    """DB エントリのリストから Garmin ステップリスト（RepeatGroup込み）を生成。
+
+    db_entries: [(name, sets, reps_str, rest_sec, note), ...]
+    category:   "STRENGTH" / "HIIT" / "PILATES" / "CARDIO" / "YOGA"
+    返値:       (steps_list, next_order)
+    """
+    steps = []
+    order = [order_start]
+
+    def add(s):
+        s["stepOrder"] = order[0]
+        steps.append(s)
+        order[0] += 1
+
+    def add_rpt(inner, iters):
+        blk = _garmin_repeat(inner, iters, order[0])
+        for i, s in enumerate(inner):
+            s["stepOrder"] = i + 1
+        steps.append(blk)
+        order[0] += 1
+
+    for name, sets, reps_str, rest_sec, note in db_entries:
+        cond_type, cond_val = _parse_reps_or_time(reps_str)
+        # 種目名は 30 文字以内
+        display = name[:28]
+        # セット数が 1 の場合は RepeatGroup 不要
+        if sets == 1:
+            add(_garmin_step(
+                "interval", cond_type, cond_val,
+                desc=display,
+                exercise_name=display,
+                exercise_category=category,
+            ))
+            if rest_sec > 0:
+                add(_garmin_step("rest", "time", rest_sec, desc="レスト"))
+        else:
+            inner = [
+                _garmin_step("interval", cond_type, cond_val,
+                             desc=display,
+                             exercise_name=display,
+                             exercise_category=category),
+                _garmin_step("rest", "time", rest_sec, desc="レスト"),
+            ]
+            add_rpt(inner, sets)
+
+    return steps, order[0]
+
 
 def _pace_to_ms(pace_sec_per_km):
     """ペース(秒/km)→速度(m/s)に変換 (Garmin API はm/s単位)"""
@@ -359,14 +466,94 @@ def build_garmin_workout(sport, intensity, dur, phase, tp, ftp, css=None, goal_t
             add_step(_garmin_step("interval","distance",max(200,total_m-400-200),"pace.zone",pace_lo,pace_hi,desc="Aerobic"))
             add_step(_garmin_step("cooldown","distance",200,"pace.zone",pace_lo,pace_hi,desc="CD"))
 
-    # ── 筋トレ / ヨガ (Garminはノーターゲットのtime stepで構成) ──
+    # ── 筋トレ / ヨガ / HIIT / ピラティス / カーディオ ─────────────
     else:
-        warm_sec = min(5,dur//8) * 60
-        cool_sec = 3 * 60
-        main_sec = max(60, dur*60 - warm_sec - cool_sec)
-        add_step(_garmin_step("warmup","time",warm_sec,desc="Warmup"))
-        add_step(_garmin_step("interval","time",main_sec,desc="Main"))
-        add_step(_garmin_step("cooldown","time",cool_sec,desc="Cooldown / Stretch"))
+        from .strength import (
+            STRENGTH_DB, HIIT_DB, PILATES_DB, CARDIO_DB,
+            YOGA_DB, YOGA_TYPE_MAP,
+        )
+
+        # フェーズ → DB レベルのマッピング
+        _level_map = {
+            "base": "base", "build": "build", "peak": "peak",
+            "race": "peak", "recovery": "base", "maintenance": "maintenance",
+        }
+        _level = _level_map.get(phase, "base")
+
+        # ウォームアップ追加 (warmup DB)
+        wu_entries = STRENGTH_DB.get(("warmup", _level),
+                     STRENGTH_DB.get(("warmup", "base"), []))
+        wu_steps, _ = _build_exercise_steps(wu_entries, "STRENGTH", 1)
+        for s in wu_steps:
+            add_step(s)
+
+        if sport == "yoga":
+            # yoga タイプを seed から決定
+            _ytype = YOGA_TYPE_MAP.get(_seed % 6, "restorative")
+            # 強度に応じてタイプを上書き
+            if intensity == "hard":
+                _ytype = "dynamic"
+            elif intensity in ("moderate", "tempo"):
+                _ytype = _seed % 2 and "balance" or "core_flex"
+            elif intensity == "recovery":
+                _ytype = "restorative"
+            yoga_entries = YOGA_DB.get(("yoga", _ytype),
+                           YOGA_DB.get(("yoga", "restorative"), []))
+            yoga_steps, next_ord = _build_exercise_steps(yoga_entries, "YOGA", order[0])
+            for s in yoga_steps:
+                add_step(s)
+            # 最後に呼吸法ステップ (pranayama)
+            if _ytype != "pranayama":
+                prana_entries = YOGA_DB.get(("yoga", "pranayama"), [])[:2]
+                prana_steps, _ = _build_exercise_steps(prana_entries, "YOGA", order[0])
+                for s in prana_steps:
+                    add_step(s)
+
+        elif sport == "hiit":
+            hiit_entries = HIIT_DB.get((_level if _level in ("base","build","peak","maintenance") else "base",),
+                           HIIT_DB.get(("hiit", "base"), []))
+            # キー形式が (area, level) なので
+            hiit_entries = HIIT_DB.get(("hiit", _level),
+                           HIIT_DB.get(("hiit", "base"), []))
+            hiit_steps, _ = _build_exercise_steps(hiit_entries, "HIIT", order[0])
+            for s in hiit_steps:
+                add_step(s)
+
+        elif sport == "pilates":
+            pil_entries = PILATES_DB.get(("pilates", _level),
+                          PILATES_DB.get(("pilates", "base"), []))
+            pil_steps, _ = _build_exercise_steps(pil_entries, "PILATES", order[0])
+            for s in pil_steps:
+                add_step(s)
+
+        elif sport == "cardio":
+            card_entries = CARDIO_DB.get(("cardio", _level),
+                           CARDIO_DB.get(("cardio", "base"), []))
+            card_steps, _ = _build_exercise_steps(card_entries, "CARDIO", order[0])
+            for s in card_steps:
+                add_step(s)
+
+        else:  # strength (既存ロジックを DB から生成)
+            focus_map = {
+                "hard":     [("core", _level), ("lower", _level), ("upper", _level)],
+                "moderate": [("core", _level), ("lower", _level)],
+                "easy":     [("core", _level), ("upper", _level)],
+                "recovery": [("core", "base")],
+            }
+            areas = focus_map.get(intensity, [("core", _level)])
+            for area_key in areas:
+                entries = STRENGTH_DB.get(area_key,
+                          STRENGTH_DB.get((area_key[0], "base"), []))
+                area_steps, _ = _build_exercise_steps(entries, "STRENGTH", order[0])
+                for s in area_steps:
+                    add_step(s)
+
+        # クールダウン追加 (cooldown DB)
+        cd_entries = STRENGTH_DB.get(("cooldown", _level),
+                     STRENGTH_DB.get(("cooldown", "base"), []))
+        cd_steps, _ = _build_exercise_steps(cd_entries, "STRENGTH", order[0])
+        for s in cd_steps:
+            add_step(s)
 
     # ── ワークアウトJSONを組み立て ────────────────────────────────
     workout_name = {
