@@ -164,7 +164,7 @@ def fetch_garmin_health(email: str, password: str, days_back: int = 7) -> dict:
     rhr       = _get("rhr",        garmin.get_rhr_day,           today_str)
     bb        = _get("body_battery",garmin.get_body_battery,     today_str, today_str)
 
-    # ── 直近 days_back 日の体重履歴 ─────────────────────────────
+    # ── 直近 days_back 日の体重・体組成履歴 ──────────────────────
     ago = (date.today() - timedelta(days=days_back)).isoformat()
     body_history = _get("body_history", garmin.get_body_composition, ago, today_str)
 
@@ -178,6 +178,14 @@ def fetch_garmin_health(email: str, password: str, days_back: int = 7) -> dict:
         s = _get(f"sleep_{d}", garmin.get_sleep_data, d)
         if s:
             sleep_history.append({"date": d, "data": s})
+
+    # ── 過去 days_back 日の Training Readiness 履歴 (日付→スコア dict) ──
+    readiness_history = {}
+    for i in range(0, days_back + 1):
+        d = (date.today() - timedelta(days=i)).isoformat()
+        rd = _get(f"readiness_{d}", garmin.get_training_readiness, d)
+        if rd:
+            readiness_history[d] = rd
 
     today_data = {
         "stats":        stats,
@@ -194,12 +202,13 @@ def fetch_garmin_health(email: str, password: str, days_back: int = 7) -> dict:
     }
 
     return {
-        "today":         today_data,
-        "body_history":  body_history,
-        "sleep_history": sleep_history,
-        "activities":    activities,
-        "fetch_errors":  fetch_errors,
-        "fetched_at":    today_str,
+        "today":              today_data,
+        "body_history":       body_history,       # 体重・体組成 (日付範囲)
+        "readiness_history":  readiness_history,  # Readiness (日付→データ dict)
+        "sleep_history":      sleep_history,
+        "activities":         activities,
+        "fetch_errors":       fetch_errors,
+        "fetched_at":         today_str,
     }
 
 

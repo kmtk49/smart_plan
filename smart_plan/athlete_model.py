@@ -259,6 +259,10 @@ def fetch_athlete_data(cfg):
     # garmin.email が設定されている場合のみ実行。
     # 未インストール・API失敗時は警告を出して Intervals.icu 値にフォールバック。
     _g_cfg = cfg.get("garmin", {})
+    # Garmin 履歴データ (plan_output の週次テーブル補完用)
+    garmin_body_water_history  = {}  # date_str → body_water_pct
+    garmin_readiness_history   = {}  # date_str → readiness score
+
     if _g_cfg.get("email"):
         try:
             import sys as _sys
@@ -267,40 +271,59 @@ def fetch_athlete_data(cfg):
                                                   _parse_readiness,
                                                   _parse_body_battery,
                                                   _parse_body_comp)
-            print("  📡 Garmin Connect から Readiness / 体内水分% を取得中...")
+            print("  📡 Garmin Connect から Readiness / 体内水分% (過去7日) を取得中...")
             _gh = fetch_garmin_health(
                 _g_cfg["email"],
                 _g_cfg.get("password", ""),
-                days_back=1,
+                days_back=7,
             )
-            # Training Readiness (Garmin Firstbeat Analytics スコア)
+            # ── 今日の Readiness ──
             _rd = _parse_readiness(_gh["today"].get("readiness"))
             if _rd.get("score") is not None:
                 readiness = float(_rd["score"])
                 _level_str = _rd.get("level", "")
                 print(f"     ✅ Readiness={readiness:.0f}/100  [{_level_str}]"
                       + (f"  ({_rd['feedback']})" if _rd.get("feedback") else ""))
-            # 体内水分% (Garmin Index スケール → body_comp)
+            # ── 過去7日の Readiness 履歴 ──
+            for _d, _rdata in (_gh.get("readiness_history") or {}).items():
+                _rp = _parse_readiness(_rdata)
+                if _rp.get("score") is not None:
+                    garmin_readiness_history[_d] = float(_rp["score"])
+            # ── 今日の体内水分% ──
             _bc = _parse_body_comp(_gh["today"].get("body_comp"))
             if _bc.get("body_water_pct") is not None:
                 body_water_pct = _bc["body_water_pct"]
                 print(f"     💧 体内水分%={body_water_pct:.1f}%  (Garmin Connect 直接)")
-            # 体組成の補完（骨格筋量・体脂肪がwellnessで取れていない場合）
+            # ── 過去7日の体内水分% 履歴 (body_history の dateWeightList から抽出) ──
+            _bh = _gh.get("body_history") or {}
+            _bh_list = (_bh.get("dateWeightList") or
+                        _bh.get("compositionList") or [])
+            for _entry in _bh_list:
+                if not isinstance(_entry, dict):
+                    continue
+                _bcp = _parse_body_comp(_entry)
+                _entry_date = (_entry.get("calendarDate") or
+                               _entry.get("date") or "")[:10]
+                if _entry_date and _bcp.get("body_water_pct") is not None:
+                    garmin_body_water_history[_entry_date] = _bcp["body_water_pct"]
+            if garmin_body_water_history:
+                print(f"     💧 体内水分% 履歴: {len(garmin_body_water_history)}日分取得")
+            # ── 体組成の補完（wellness未同期時） ──
             if muscle_mass_kg_well == 0 and _bc.get("muscle_mass_kg"):
                 muscle_mass_kg_well = _bc["muscle_mass_kg"]
                 print(f"     💪 骨格筋量={muscle_mass_kg_well:.1f}kg  (Garmin 体組成)")
             if body_fat_pct_well == 0 and _bc.get("body_fat_pct"):
                 body_fat_pct = _bc["body_fat_pct"]
                 body_fat_pct_well = body_fat_pct
-            # Body Battery (情報表示のみ)
+            # ── Body Battery (情報表示のみ) ──
             _bb = _parse_body_battery(_gh["today"].get("body_battery"))
             if _bb.get("current") is not None:
                 print(f"     🔋 Body Battery={_bb['current']:.0f}")
-            # 取得エラーがあれば出力
+            # 取得エラー
             for _err in (_gh.get("fetch_errors") or []):
                 print(f"     ⚠️  Garmin: {_err}")
         except RuntimeError as _ge:
-            print(f"  ⚠️  Garmin Connect スキップ (garminconnect 未インストール): {_ge}")
+            print(f"  ⚠️  Garmin Connect スキップ ({_ge})")
         except Exception as _ge:
             print(f"  ⚠️  Garmin Connect 取得スキップ: {type(_ge).__name__}: {_ge}")
 
@@ -366,7 +389,9 @@ def fetch_athlete_data(cfg):
             "hrv":hrv,"hrv_7d_avg":hrv_7d,
             "sleep_h":sleep_h,"rhr":rhr,"rhr_avg":rhr_avg,
             "body_fat_pct":    body_fat_pct,
-            "body_water_pct":  body_water_pct,
+            "body_water_pct":           body_water_pct,
+            "garmin_body_water_history":garmin_body_water_history,
+            "garmin_readiness_history": garmin_readiness_history,
             "muscle_mass_kg":  muscle_mass_kg_well if muscle_mass_kg_well > 0 else None,
             "readiness":       readiness,
             "hydration_ml":    hydration_ml,

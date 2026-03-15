@@ -142,14 +142,22 @@ def print_calorie_summary(plan, cfg, athlete=None):
     if not rows:
         return
 
-    # 今日の Garmin Connect 直接取得値（体内水分%）で最新行を補完
-    _today_bw = athlete.get("body_water_pct") if athlete else None
-    if _today_bw is not None and rows:
-        last = rows[-1]
-        if last["hydration_pct"] is None:
-            _prev_bw = rows[-2]["hydration_pct"] if len(rows) >= 2 else None
-            last["hydration_pct"] = _today_bw
-            last["dh"] = (_today_bw - _prev_bw) if _prev_bw else None
+    # Garmin Connect 履歴で各日の体内水分% を補完
+    _bw_hist = (athlete.get("garmin_body_water_history") or {}) if athlete else {}
+    _bw_hist_prev = None
+    for r in rows:
+        if r["hydration_pct"] is None and r["date"] in _bw_hist:
+            r["hydration_pct"] = _bw_hist[r["date"]]
+        # 今日の直接取得値でも補完
+        if r["hydration_pct"] is None and r["date"] == rows[-1]["date"]:
+            _today_bw = athlete.get("body_water_pct") if athlete else None
+            if _today_bw is not None:
+                r["hydration_pct"] = _today_bw
+        # 差分を再計算
+        if r["hydration_pct"] is not None and _bw_hist_prev is not None:
+            r["dh"] = r["hydration_pct"] - _bw_hist_prev
+        if r["hydration_pct"] is not None:
+            _bw_hist_prev = r["hydration_pct"]
 
     has_water = any(r["hydration_pct"] for r in rows)
 
