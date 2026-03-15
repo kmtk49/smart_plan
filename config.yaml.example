@@ -1,0 +1,25 @@
+# config.yaml.example
+# このファイルをコピーして config.yaml を作成してください。
+# config.yaml は .gitignore で除外されており、Gitにはコミットされません。
+#
+# 代わりに環境変数でも設定可能です（CI/CD や Docker 環境向け）:
+#   INTERVALS_ICU_ATHLETE_ID   — アスリートID
+#   INTERVALS_ICU_API_KEY      — APIキー
+#   GOOGLE_CALENDAR_ID         — カレンダーID
+#   GOOGLE_CREDENTIALS_FILE    — credentials.json のパス
+#   GOOGLE_DRIVE_TOKEN         — Google Drive アクセストークン
+
+athlete:
+  intervals_icu_athlete_id: "iXXXXXX"       # ← あなたのアスリートID
+  intervals_icu_api_key: "your_api_key_here" # ← Intervals.icu の APIキー
+  ftp_fallback: 223      # APIから取得できない場合のFTP
+  tp_fallback: 288       # ランニングテンポペース(秒/km)
+  css_fallback: 125      # スイムCSS(秒/100m)
+
+google_calendar:
+  credentials_file: "credentials.json"  # OAuth2 認証ファイルのパス
+  calendar_id: "primary"                # "primary" または カレンダーID
+
+# Google Drive からリザルトPDFを取得する場合（任意）
+# google_drive:
+#   token: "ya29.xxxx"   # または環境変数 GOOGLE_DRIVE_TOKEN を使用
