@@ -97,8 +97,9 @@ def print_calorie_summary(plan, cfg, athlete=None):
                 _bmr = round(10 * _wt + 6.25 * _h - 5 * _age + _sex)
                 total_kcal = act_w + _bmr
 
-        # ── 水分量 ───────────────────────────────────────────────
-        hydration_ml = float(w.get("hydration") or
+        # ── 水分量 (hydrationVolume が正しいフィールド名) ────────
+        hydration_ml = float(w.get("hydrationVolume") or
+                             w.get("hydration") or
                              w.get("hydrationMilliliters") or
                              w.get("hydrationIntakeInMilliliters") or 0) or None
 

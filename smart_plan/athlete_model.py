@@ -240,14 +240,15 @@ def fetch_athlete_data(cfg):
     # muscleMassKg: Garmin/Withings から同期される骨格筋量 (kg)
     muscle_mass_kg_well = float(latest.get("muscleMassKg") or latest.get("muscle_mass") or 0)
 
-    # ── Readiness (Garmin Training Readiness スコア 0-100) ──
-    readiness_well = (latest.get("trainingReadiness") or
-                      latest.get("training_readiness_score") or
+    # ── Readiness (Intervals.icu wellness の "readiness" フィールド) ──
+    readiness_well = (latest.get("readiness") or
+                      latest.get("trainingReadiness") or
                       latest.get("icu_training_readiness"))
     readiness = float(readiness_well) if readiness_well is not None else None
 
-    # ── 水分量 (Garmin/Apple Health 同期: ml単位) ──
-    hydration_ml = float(latest.get("hydration") or
+    # ── 水分量 (ml単位: hydrationVolume が正しいフィールド名) ──
+    hydration_ml = float(latest.get("hydrationVolume") or
+                         latest.get("hydration") or
                          latest.get("hydrationMilliliters") or
                          latest.get("hydrationIntakeInMilliliters") or 0) or None
 
