@@ -1,0 +1,963 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Coach AI — Triathlon Training Planner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Noto+Sans+JP:wght@300;400;500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --black: #0a0a0f;
+  --dark:  #111118;
+  --panel: #16161f;
+  --border:#1e1e2e;
+  --muted: #2a2a3a;
+  --text:  #e0e0ef;
+  --dim:   #7070a0;
+  --swim:  #0ea5e9;
+  --bike:  #f59e0b;
+  --run:   #22c55e;
+  --str:   #a855f7;
+  --rest:  #374151;
+  --accent:#e8ff47;
+  --danger:#ef4444;
+  --coach-bg: #1a1a2e;
+  --user-bg:  #1e2a1e;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: var(--black);
+  color: var(--text);
+  font-family: 'Noto Sans JP', sans-serif;
+  font-weight: 300;
+  overflow: hidden;
+}
+
+/* ── LAYOUT ─────────────────────────────────────────────── */
+#app {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  grid-template-rows: 56px 1fr;
+  height: 100vh;
+  gap: 0;
+}
+
+/* ── HEADER ─────────────────────────────────────────────── */
+header {
+  grid-column: 1 / -1;
+  background: var(--dark);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  gap: 16px;
+}
+.logo {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 22px;
+  letter-spacing: 3px;
+  color: var(--accent);
+}
+.logo span { color: var(--dim); font-size: 13px; letter-spacing: 1px; margin-left: 8px; font-family: 'Noto Sans JP', sans-serif; font-weight: 300; }
+.status-pills { display: flex; gap: 8px; margin-left: auto; }
+.pill {
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 4px 12px;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--dim);
+  transition: all .3s;
+}
+.pill.loaded { color: var(--text); border-color: var(--accent); background: rgba(232,255,71,.05); }
+.pill.ok { color: var(--run); border-color: var(--run); background: rgba(34,197,94,.05); }
+.pill.warn { color: var(--bike); border-color: var(--bike); background: rgba(245,158,11,.05); }
+.server-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 14px;
+  color: var(--dim);
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  cursor: pointer;
+  transition: all .2s;
+}
+.server-btn:hover { border-color: var(--accent); color: var(--accent); }
+.server-btn.connected { border-color: var(--run); color: var(--run); }
+
+/* ── SIDEBAR (chat) ─────────────────────────────────────── */
+#sidebar {
+  background: var(--dark);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sidebar-header {
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--dim);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+#messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  scroll-behavior: smooth;
+}
+#messages::-webkit-scrollbar { width: 3px; }
+#messages::-webkit-scrollbar-thumb { background: var(--muted); border-radius: 2px; }
+
+.bubble {
+  max-width: 100%;
+  padding: 12px 14px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.65;
+  animation: fadeUp .25s ease;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.bubble.coach {
+  background: var(--coach-bg);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 4px;
+  align-self: flex-start;
+}
+.bubble.user {
+  background: var(--user-bg);
+  border: 1px solid rgba(34,197,94,.2);
+  border-bottom-right-radius: 4px;
+  align-self: flex-end;
+  color: #b0e8b0;
+}
+.bubble.system {
+  background: rgba(232,255,71,.04);
+  border: 1px solid rgba(232,255,71,.15);
+  color: var(--accent);
+  font-size: 12px;
+  font-family: 'JetBrains Mono', monospace;
+  align-self: center;
+  text-align: center;
+  border-radius: 8px;
+}
+.typing-indicator {
+  display: flex; gap: 5px; align-items: center; padding: 14px;
+  background: var(--coach-bg); border: 1px solid var(--border);
+  border-radius: 12px; border-bottom-left-radius: 4px; align-self: flex-start;
+  animation: fadeUp .25s ease;
+}
+.typing-indicator span {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--dim);
+  animation: bounce 1.2s infinite;
+}
+.typing-indicator span:nth-child(2) { animation-delay: .2s; }
+.typing-indicator span:nth-child(3) { animation-delay: .4s; }
+@keyframes bounce {
+  0%, 80%, 100% { transform: scale(0.6); opacity: .4; }
+  40% { transform: scale(1); opacity: 1; }
+}
+
+.quick-replies {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 16px 12px;
+}
+.qr-btn {
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 5px 12px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  font-family: 'Noto Sans JP', sans-serif;
+  transition: all .15s;
+}
+.qr-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(232,255,71,.05); }
+
+.input-area {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 8px;
+}
+#msgInput {
+  flex: 1;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: var(--text);
+  font-family: 'Noto Sans JP', sans-serif;
+  font-size: 13px;
+  outline: none;
+  transition: border-color .2s;
+  resize: none;
+  min-height: 40px;
+  max-height: 100px;
+}
+#msgInput:focus { border-color: rgba(232,255,71,.4); }
+#sendBtn {
+  background: var(--accent);
+  color: var(--black);
+  border: none;
+  border-radius: 8px;
+  width: 40px;
+  font-size: 18px;
+  cursor: pointer;
+  font-weight: 700;
+  transition: transform .1s, opacity .2s;
+}
+#sendBtn:hover { transform: scale(1.05); }
+#sendBtn:disabled { opacity: .4; cursor: not-allowed; }
+
+/* ── MAIN (plan) ─────────────────────────────────────────── */
+#main {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--black);
+}
+
+.plan-toolbar {
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--dark);
+}
+.plan-toolbar h2 {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 18px;
+  letter-spacing: 2px;
+  color: var(--dim);
+  flex: 1;
+}
+.plan-toolbar h2.active { color: var(--text); }
+
+.btn {
+  border: none; border-radius: 6px; padding: 8px 18px;
+  font-size: 13px; font-family: 'Noto Sans JP', sans-serif;
+  cursor: pointer; transition: all .2s; font-weight: 500;
+}
+.btn-generate {
+  background: var(--accent); color: var(--black);
+}
+.btn-generate:hover { filter: brightness(1.1); transform: translateY(-1px); }
+.btn-generate:disabled { opacity: .4; cursor: not-allowed; transform: none; }
+.btn-upload {
+  background: var(--run); color: var(--black);
+}
+.btn-upload:hover { filter: brightness(1.1); }
+.btn-upload:disabled { opacity: .4; cursor: not-allowed; }
+.btn-rebuild {
+  background: var(--muted); color: var(--text);
+  border: 1px solid var(--border);
+}
+.btn-rebuild:hover { border-color: var(--accent); color: var(--accent); }
+.btn-danger {
+  background: rgba(239,68,68,.12); color: var(--danger);
+  border: 1px solid rgba(239,68,68,.2);
+}
+.btn-danger:hover { background: rgba(239,68,68,.2); }
+
+#planContainer {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+}
+#planContainer::-webkit-scrollbar { width: 4px; }
+#planContainer::-webkit-scrollbar-thumb { background: var(--muted); border-radius: 2px; }
+
+/* ── EMPTY STATE ──────────────────────────────────────────── */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 16px;
+  color: var(--dim);
+}
+.empty-icon {
+  font-size: 64px;
+  opacity: .3;
+  animation: pulse 3s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: .2; transform: scale(1); }
+  50% { opacity: .4; transform: scale(1.05); }
+}
+.empty-state p { font-size: 14px; text-align: center; line-height: 1.8; }
+
+/* ── PLAN SUMMARY ─────────────────────────────────────────── */
+.plan-summary {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px 24px;
+  margin-bottom: 24px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 16px;
+}
+.summary-stat { text-align: center; }
+.summary-stat .val {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 28px;
+  letter-spacing: 1px;
+  color: var(--accent);
+  display: block;
+}
+.summary-stat .lbl { font-size: 11px; color: var(--dim); letter-spacing: 1px; }
+
+.race-chips { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; }
+.race-chip {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--muted); border-radius: 20px;
+  padding: 5px 12px; font-size: 12px;
+}
+.race-chip .prio-a { color: var(--accent); font-weight: 700; }
+.race-chip .prio-b { color: var(--swim); }
+.cond-bar {
+  grid-column: 1 / -1;
+  display: flex; align-items: center; gap: 8px; font-size: 12px;
+}
+.cond-score {
+  background: var(--muted); border-radius: 20px;
+  padding: 3px 10px; font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+}
+.cond-label { color: var(--dim); }
+
+/* ── PLAN DAYS ─────────────────────────────────────────────── */
+.plan-days { display: flex; flex-direction: column; gap: 10px; }
+
+.day-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  transition: border-color .2s;
+  cursor: pointer;
+}
+.day-card:hover { border-color: rgba(255,255,255,.12); }
+.day-card.expanded { border-color: rgba(232,255,71,.2); }
+
+.day-header {
+  display: grid;
+  grid-template-columns: 80px 36px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+}
+.day-date {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--dim);
+}
+.day-date .dow { display: block; font-size: 10px; margin-top: 1px; }
+.sport-icon { font-size: 20px; text-align: center; }
+.day-name { font-size: 14px; font-weight: 500; }
+.day-dur {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+.sport-bar {
+  height: 3px;
+  width: 100%;
+}
+
+.day-body {
+  display: none;
+  padding: 0 16px 16px;
+}
+.day-card.expanded .day-body { display: block; }
+.day-desc {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--dim);
+  white-space: pre-wrap;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  margin-top: 4px;
+}
+.gcal-note {
+  font-size: 11px; color: var(--swim); margin-bottom: 6px;
+  padding: 4px 8px; background: rgba(14,165,233,.08);
+  border-radius: 4px; display: inline-block;
+}
+
+/* Sport colors */
+.sport-swim  .sport-bar { background: var(--swim); }
+.sport-bike  .sport-bar { background: var(--bike); }
+.sport-brick .sport-bar { background: linear-gradient(90deg, var(--bike) 60%, var(--run) 100%); }
+.sport-run   .sport-bar { background: var(--run); }
+.sport-strength .sport-bar { background: var(--str); }
+.sport-yoga  .sport-bar { background: #ec4899; }
+.sport-rest  .sport-bar { background: var(--rest); }
+.sport-race  .sport-bar { background: var(--accent); }
+
+.sport-swim  .day-name { color: var(--swim); }
+.sport-bike  .day-name { color: var(--bike); }
+.sport-brick .day-name { background: linear-gradient(90deg, var(--bike), var(--run)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.sport-run   .day-name { color: var(--run); }
+.sport-strength .day-name { color: var(--str); }
+.sport-yoga  .day-name { color: #ec4899; }
+.sport-race  .day-name { color: var(--accent); }
+
+/* ── UPLOAD DIALOG ─────────────────────────────────────────── */
+.overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.7);
+  backdrop-filter: blur(4px);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 100;
+  opacity: 0; pointer-events: none;
+  transition: opacity .2s;
+}
+.overlay.show { opacity: 1; pointer-events: all; }
+.dialog {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 32px;
+  width: 420px;
+  text-align: center;
+  transform: translateY(16px);
+  transition: transform .2s;
+}
+.overlay.show .dialog { transform: translateY(0); }
+.dialog h3 {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 24px;
+  letter-spacing: 2px;
+  margin-bottom: 12px;
+}
+.dialog p { font-size: 13px; color: var(--dim); line-height: 1.7; margin-bottom: 24px; }
+.dialog-stats {
+  background: var(--dark); border-radius: 10px; padding: 16px;
+  margin-bottom: 24px; text-align: left;
+}
+.dialog-stats li {
+  list-style: none; font-size: 12px; color: var(--text);
+  padding: 4px 0; font-family: 'JetBrains Mono', monospace;
+}
+.dialog-actions { display: flex; gap: 10px; justify-content: center; }
+.dialog-actions .btn { min-width: 120px; }
+
+/* ── TOAST ─────────────────────────────────────────────────── */
+.toast {
+  position: fixed; bottom: 24px; right: 24px;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; padding: 12px 20px; font-size: 13px;
+  z-index: 200; transform: translateY(60px); opacity: 0;
+  transition: all .3s; max-width: 320px;
+}
+.toast.show { transform: translateY(0); opacity: 1; }
+.toast.success { border-color: var(--run); color: var(--run); }
+.toast.error   { border-color: var(--danger); color: var(--danger); }
+
+/* ── SPINNER ─────────────────────────────────────────────── */
+.spinner {
+  display: inline-block; width: 16px; height: 16px;
+  border: 2px solid var(--border); border-top-color: var(--accent);
+  border-radius: 50%; animation: spin .6s linear infinite;
+  vertical-align: middle; margin-right: 6px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Scrollbar for plan */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--muted); border-radius: 2px; }
+</style>
+</head>
+<body>
+<div id="app">
+
+<!-- HEADER -->
+<header>
+  <div class="logo">COACH AI <span>Triathlon Planner</span></div>
+  <div class="status-pills">
+    <div class="pill" id="pillAthl">Loading...</div>
+    <div class="pill" id="pillCond">--</div>
+    <div class="pill" id="pillRace">--</div>
+  </div>
+  <button class="server-btn" id="serverBtn" onclick="checkServer()">● localhost:8765</button>
+</header>
+
+<!-- SIDEBAR: CHAT -->
+<div id="sidebar">
+  <div class="sidebar-header">🤖 Coach Chat</div>
+
+  <div id="messages"></div>
+
+  <div class="quick-replies" id="quickReplies"></div>
+
+  <div class="input-area">
+    <textarea id="msgInput" rows="1"
+      placeholder="メッセージを入力..."
+      onkeydown="handleKey(event)"></textarea>
+    <button id="sendBtn" onclick="sendMessage()">↑</button>
+  </div>
+</div>
+
+<!-- MAIN: PLAN -->
+<div id="main">
+  <div class="plan-toolbar">
+    <h2 id="planTitle">TRAINING PLAN</h2>
+    <button class="btn btn-generate" id="btnGenerate" onclick="generatePlan()">
+      ⚡ プランを生成
+    </button>
+    <button class="btn btn-rebuild" id="btnRebuild" onclick="rebuildPlan()" style="display:none">
+      🔄 再構築
+    </button>
+    <button class="btn btn-upload" id="btnUpload" onclick="showUploadDialog()" style="display:none">
+      📤 Intervals.icu にアップロード
+    </button>
+  </div>
+
+  <div id="planContainer">
+    <div class="empty-state" id="emptyState">
+      <div class="empty-icon">🏊‍♂️🚴‍♂️🏃‍♂️</div>
+      <p>左のチャットでコーチと話して<br>トレーニングプランを作りましょう</p>
+      <p style="font-size:12px;color:#444">
+        まずサーバーを起動: <code style="color:#e8ff47">python smart_plan_v6.py --server</code>
+      </p>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<!-- UPLOAD DIALOG -->
+<div class="overlay" id="uploadOverlay">
+  <div class="dialog">
+    <h3>📤 アップロード確認</h3>
+    <p>以下の内容を Intervals.icu に登録します。<br>既存のワークアウトは削除されてから再登録されます。</p>
+    <ul class="dialog-stats" id="uploadStats"></ul>
+    <div class="dialog-actions">
+      <button class="btn btn-upload" onclick="doUpload()">アップロード</button>
+      <button class="btn btn-rebuild" onclick="hideUploadDialog()">キャンセル</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<script>
+const API = 'http://localhost:8765';
+let chatHistory = [];
+let chatContext = {};
+let currentPlan = null;
+let serverConnected = false;
+
+const SPORT_EMOJI = {
+  swim:'🏊', bike:'🚴', run:'🏃', brick:'🚴➡🏃',
+  strength:'💪', yoga:'🧘', stretch:'🤸', hiit:'⚡',
+  rest:'💤', race:'🏁'
+};
+const DOW_JP = ['日','月','火','水','木','金','土'];
+
+// ── INIT ──────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', async () => {
+  await checkServer();
+  addCoachMessage(
+    'こんにちは！コーチAIです 👋\n\n' +
+    '今日の調子を教えてください 😊\n\n' +
+    '1️⃣ 絶好調💪\n2️⃣ 普通😊\n3️⃣ 疲れ気味😓\n4️⃣ ボロボロ🛑\n\n' +
+    'または自由に入力してもOKです'
+  );
+  setQuickReplies(['1 絶好調','2 普通','3 疲れ気味','4 ボロボロ']);
+});
+
+async function checkServer() {
+  const btn = document.getElementById('serverBtn');
+  try {
+    const r = await fetch(`${API}/api/status`, { signal: AbortSignal.timeout(3000) });
+    const d = await r.json();
+    if (d.ok) {
+      serverConnected = true;
+      btn.className = 'server-btn connected';
+      btn.textContent = '● 接続済み :8765';
+      updateStatusPills(d);
+    }
+  } catch {
+    serverConnected = false;
+    btn.className = 'server-btn';
+    btn.textContent = '● 未接続 :8765';
+    document.getElementById('pillAthl').textContent = 'サーバー未起動';
+    document.getElementById('pillAthl').className = 'pill warn';
+  }
+}
+
+function updateStatusPills(d) {
+  const a = d.athlete || {};
+  const c = d.cond || {};
+  const condIcon = {peak:'🔥',good:'✅',normal:'😐',fatigued:'😓',depleted:'🛑'}[c.condition] || '';
+  const p1 = document.getElementById('pillAthl');
+  p1.textContent = `CTL ${a.ctl}  Form ${a.form > 0 ? '+' : ''}${a.form}`;
+  p1.className = 'pill loaded';
+  const p2 = document.getElementById('pillCond');
+  p2.textContent = `HRV ${a.hrv}  ${condIcon} ${c.condition || '--'}`;
+  p2.className = 'pill ' + (c.condition === 'fatigued' || c.condition === 'depleted' ? 'warn' : 'ok');
+  const p3 = document.getElementById('pillRace');
+  const nextA = (d.races || []).find(r => r.priority === 'A');
+  if (nextA) {
+    const weeks = Math.floor((new Date(nextA.date) - new Date()) / (7*86400000));
+    p3.textContent = `🅐 ${nextA.name.slice(0,12)} 残り${weeks}週`;
+    p3.className = 'pill loaded';
+  }
+}
+
+// ── CHAT ──────────────────────────────────────────────────────
+function addCoachMessage(text) {
+  appendBubble(text, 'coach');
+}
+function addUserMessage(text) {
+  appendBubble(text, 'user');
+}
+function addSystemMessage(text) {
+  appendBubble(text, 'system');
+}
+
+function appendBubble(text, type) {
+  const msgs = document.getElementById('messages');
+  const div = document.createElement('div');
+  div.className = `bubble ${type}`;
+  div.textContent = text;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+  return div;
+}
+
+function showTyping() {
+  const msgs = document.getElementById('messages');
+  const div = document.createElement('div');
+  div.className = 'typing-indicator';
+  div.id = 'typing';
+  div.innerHTML = '<span></span><span></span><span></span>';
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+function hideTyping() {
+  const el = document.getElementById('typing');
+  if (el) el.remove();
+}
+
+function setQuickReplies(options) {
+  const qr = document.getElementById('quickReplies');
+  qr.innerHTML = '';
+  options.forEach(opt => {
+    const btn = document.createElement('button');
+    btn.className = 'qr-btn';
+    btn.textContent = opt;
+    btn.onclick = () => {
+      document.getElementById('msgInput').value = opt;
+      sendMessage();
+    };
+    qr.appendChild(btn);
+  });
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+}
+
+async function sendMessage() {
+  const input = document.getElementById('msgInput');
+  const msg = input.value.trim();
+  if (!msg) return;
+  input.value = '';
+  input.style.height = 'auto';
+
+  addUserMessage(msg);
+  chatHistory.push({ role: 'user', content: msg });
+  setQuickReplies([]);
+
+  document.getElementById('sendBtn').disabled = true;
+  showTyping();
+
+  if (!serverConnected) {
+    hideTyping();
+    addCoachMessage('⚠️ サーバーに接続できません。\npython smart_plan_v6.py --server を実行してください。');
+    document.getElementById('sendBtn').disabled = false;
+    return;
+  }
+
+  try {
+    const r = await fetch(`${API}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: msg, history: chatHistory, context: chatContext }),
+    });
+    const d = await r.json();
+    hideTyping();
+
+    if (d.ok) {
+      chatContext = d.context || chatContext;
+      chatHistory.push({ role: 'assistant', content: d.reply });
+      addCoachMessage(d.reply);
+
+      if (d.ready) {
+        // プラン生成ボタンをハイライト
+        document.getElementById('btnGenerate').style.animation = 'pulse 1s ease 3';
+        setQuickReplies(['⚡ プランを生成する','もう少し追加したい']);
+      } else {
+        // コンテキストに応じてクイックリプライを更新
+        const qrs = getContextQuickReplies(chatContext);
+        setQuickReplies(qrs);
+      }
+    } else {
+      addCoachMessage('エラーが発生しました: ' + (d.error || '不明'));
+    }
+  } catch (e) {
+    hideTyping();
+    addCoachMessage('通信エラー: ' + e.message);
+  }
+  document.getElementById('sendBtn').disabled = false;
+}
+
+function getContextQuickReplies(ctx) {
+  if (!ctx.feeling) return ['1 絶好調','2 普通','3 疲れ気味','4 ボロボロ'];
+  if (!ctx.force_intensity && !(ctx.requests||[]).length) {
+    return ['土日朝はスイム1.5時間','強度高めで','軽めに','プランを作って'];
+  }
+  return ['プランを作って','10日間で','14日間で','強度高めで'];
+}
+
+// ── PLAN GENERATION ──────────────────────────────────────────
+async function generatePlan() {
+  if (!serverConnected) {
+    showToast('サーバーに接続できません', 'error');
+    return;
+  }
+  const btn = document.getElementById('btnGenerate');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>生成中...';
+
+  addSystemMessage('⚡ プランを生成しています...');
+
+  try {
+    const r = await fetch(`${API}/api/plan`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ context: chatContext }),
+    });
+    const d = await r.json();
+
+    if (d.ok) {
+      currentPlan = d.plan;
+      renderPlan(d);
+      document.getElementById('btnRebuild').style.display = '';
+      document.getElementById('btnUpload').style.display = '';
+      addCoachMessage('✅ プランを生成しました！\n右のパネルで確認してください。\nアップロードしますか？');
+      setQuickReplies(['アップロードする','修正して再構築','キャンセル']);
+    } else {
+      addCoachMessage('プラン生成エラー: ' + (d.error || '不明'));
+      showToast('プラン生成失敗', 'error');
+    }
+  } catch (e) {
+    addCoachMessage('通信エラー: ' + e.message);
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = '⚡ プランを生成';
+}
+
+function rebuildPlan() {
+  // チャットにリダイレクト
+  document.getElementById('msgInput').focus();
+  addCoachMessage('修正リクエストを入力してください 🔄\n\n例:\n・「木曜をスイムに変えて」\n・「週末だけ強度を上げて」\n・「10日ではなく14日にして」');
+  setQuickReplies(['強度を上げて','強度を下げて','日数を14日に','スイムを増やして']);
+  chatContext['ready_to_generate'] = false;
+}
+
+// ── PLAN RENDERING ───────────────────────────────────────────
+function renderPlan(d) {
+  const container = document.getElementById('planContainer');
+  const title = document.getElementById('planTitle');
+
+  document.getElementById('emptyState')?.remove();
+  title.textContent = 'TRAINING PLAN';
+  title.className = 'active';
+
+  container.innerHTML = '';
+
+  // Summary card
+  const plan = d.plan || [];
+  const active = plan.filter(p => p.sport !== 'rest' && p.sport !== 'race');
+  const totalH = active.reduce((s, p) => s + (p.duration_min || 0), 0) / 60;
+  const cond = d.cond || {};
+  const condIcon = {peak:'🔥',good:'✅',normal:'😐',fatigued:'😓',depleted:'🛑'}[cond.condition] || '';
+  const races = d.races || [];
+  const nextA = races.find(r => r.priority === 'A');
+  const nextB = races.find(r => r.priority === 'B');
+
+  const summary = document.createElement('div');
+  summary.className = 'plan-summary';
+  summary.innerHTML = `
+    <div class="summary-stat">
+      <span class="val">${totalH.toFixed(1)}h</span>
+      <div class="lbl">合計トレーニング</div>
+    </div>
+    <div class="summary-stat">
+      <span class="val">${active.length}</span>
+      <div class="lbl">セッション数</div>
+    </div>
+    <div class="summary-stat">
+      <span class="val">${plan.length}</span>
+      <div class="lbl">日数</div>
+    </div>
+    <div class="summary-stat">
+      <span class="val">${d.athlete ? d.athlete.ctl : '--'}</span>
+      <div class="lbl">CTL</div>
+    </div>
+    <div class="cond-bar">
+      <span class="cond-score">${condIcon} ${cond.condition || '--'} ${cond.score || '--'}/10</span>
+      <span class="cond-label">HRV Form ${d.athlete ? d.athlete.form : '--'}</span>
+    </div>
+    <div class="race-chips">
+      ${nextA ? `<div class="race-chip"><span class="prio-a">🅐</span> ${nextA.name} (${nextA.date})</div>` : ''}
+      ${nextB ? `<div class="race-chip"><span class="prio-b">🅑</span> ${nextB.name} (${nextB.date})</div>` : ''}
+    </div>
+  `;
+  container.appendChild(summary);
+
+  // Day cards
+  const days = document.createElement('div');
+  days.className = 'plan-days';
+
+  plan.forEach((item, i) => {
+    const d_obj = new Date(item.date + 'T00:00:00');
+    const dow = DOW_JP[d_obj.getDay()];
+    const emoji = SPORT_EMOJI[item.sport] || '🏋️';
+    const dur = item.duration_min > 0 ? `${item.duration_min}分` : '';
+    const gcalNote = (item.gcal_notes || []).join(' ');
+
+    const card = document.createElement('div');
+    card.className = `day-card sport-${item.sport}`;
+    card.innerHTML = `
+      <div class="sport-bar"></div>
+      <div class="day-header">
+        <div class="day-date">
+          ${item.date.slice(5)}
+          <span class="dow">${dow}曜日</span>
+        </div>
+        <div class="sport-icon">${emoji}</div>
+        <div class="day-name">${item.name}</div>
+        <div class="day-dur">${dur}</div>
+      </div>
+      <div class="day-body">
+        ${gcalNote ? `<div class="gcal-note">📅 ${gcalNote}</div>` : ''}
+        <div class="day-desc">${item.description ? item.description.slice(0, 600) : ''}</div>
+      </div>
+    `;
+    card.querySelector('.day-header').addEventListener('click', () => {
+      card.classList.toggle('expanded');
+    });
+    days.appendChild(card);
+  });
+
+  container.appendChild(days);
+}
+
+// ── UPLOAD ───────────────────────────────────────────────────
+function showUploadDialog() {
+  if (!currentPlan) return;
+  const active = currentPlan.filter(p => p.sport !== 'rest' && p.sport !== 'race');
+  const stats = document.getElementById('uploadStats');
+  const dates = active.map(p => p.date);
+  const oldest = dates[0], newest = dates[dates.length-1];
+  stats.innerHTML = `
+    <li>📅 期間: ${oldest} 〜 ${newest}</li>
+    <li>📊 セッション数: ${active.length}件</li>
+    <li>⏱ 合計時間: ${(active.reduce((s,p) => s+p.duration_min,0)/60).toFixed(1)}h</li>
+    <li>🗑 既存ワークアウトを削除してから登録します</li>
+  `;
+  document.getElementById('uploadOverlay').classList.add('show');
+}
+function hideUploadDialog() {
+  document.getElementById('uploadOverlay').classList.remove('show');
+}
+
+async function doUpload() {
+  hideUploadDialog();
+  const btn = document.getElementById('btnUpload');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>アップロード中...';
+  addSystemMessage('📤 Intervals.icu にアップロード中...');
+
+  try {
+    const r = await fetch(`${API}/api/upload`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan: currentPlan }),
+    });
+    const d = await r.json();
+
+    if (d.ok) {
+      showToast(`✅ ${d.uploaded}件アップロード完了！`, 'success');
+      addCoachMessage(`✅ ${d.uploaded}件をIntervals.icuに登録しました！\nお疲れ様でした。頑張ってください 💪`);
+      addSystemMessage('アップロード完了 ✅');
+    } else {
+      showToast('アップロード失敗: ' + (d.error || '不明'), 'error');
+      addCoachMessage('アップロードに失敗しました: ' + (d.error || '不明'));
+    }
+  } catch (e) {
+    showToast('通信エラー: ' + e.message, 'error');
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = '📤 Intervals.icu にアップロード';
+}
+
+// ── UTILS ────────────────────────────────────────────────────
+function showToast(msg, type='success') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = `toast show ${type}`;
+  setTimeout(() => t.className = 'toast', 3500);
+}
+
+// Auto-resize textarea
+document.getElementById('msgInput').addEventListener('input', function() {
+  this.style.height = 'auto';
+  this.style.height = Math.min(this.scrollHeight, 100) + 'px';
+});
+
+// Close overlay on backdrop click
+document.getElementById('uploadOverlay').addEventListener('click', function(e) {
+  if (e.target === this) hideUploadDialog();
+});
+</script>
+</body>
+</html>

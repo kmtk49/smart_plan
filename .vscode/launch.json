@@ -1,0 +1,41 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Smart Plan (preview)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run_smart_plan.py",
+            "args": ["--preview"],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Smart Plan (today)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run_smart_plan.py",
+            "args": ["--today"],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Smart Plan (14日)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run_smart_plan.py",
+            "args": ["--days", "14", "--preview"],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Smart Plan (chat server)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run_smart_plan.py",
+            "args": ["--server"],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal"
+        }
+    ]
+}
