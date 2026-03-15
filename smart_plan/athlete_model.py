@@ -247,6 +247,7 @@ def fetch_athlete_data(cfg):
     readiness = float(readiness_well) if readiness_well is not None else None
 
     # ── 水分量 (ml単位: hydrationVolume が正しいフィールド名) ──
+    # ※ GarminアプリまたはIntervals.icuで水分量を手動入力しないと常にNone
     hydration_ml = float(latest.get("hydrationVolume") or
                          latest.get("hydration") or
                          latest.get("hydrationMilliliters") or
