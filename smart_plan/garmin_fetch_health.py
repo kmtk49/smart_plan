@@ -68,6 +68,65 @@ def safe_get(fn, *args, label="", **kwargs):
         return None
 
 
+def fetch_weigh_ins_parsed(api, days: int = 14) -> dict:
+    """
+    get_weigh_ins() で全計測データを取得し、タイムスタンプ付きで返す。
+
+    戻り値:
+        {
+          "YYYY-MM-DD": {
+            "morning": {"weight_kg": float, "body_water_pct": float,
+                        "body_fat_pct": float, "time_jst": "HH:MM",
+                        "ts_sec": float},
+            "all": [ ...morning と同構造... ]   # 古い順ソート済み
+          },
+          ...
+        }
+    """
+    from datetime import date as _date, timedelta as _td, datetime as _dt, timezone as _tz
+    JST = _tz(_td(hours=9))
+    start_str = (_date.today() - _td(days=days)).isoformat()
+    end_str   = _date.today().isoformat()
+
+    raw = safe_get(api.get_weigh_ins, start_str, end_str, label="全計測(weigh_ins)")
+    if not raw:
+        return {}
+
+    result = {}
+    for day_summary in (raw.get("dailyWeightSummaries") or []):
+        date_str    = day_summary.get("summaryDate", "")
+        all_metrics = day_summary.get("allWeightMetrics") or []
+        if not date_str or not all_metrics:
+            continue
+
+        parsed = []
+        for m in all_metrics:
+            ts_ms = m.get("timestampGMT") or m.get("date") or 0
+            if not ts_ms:
+                continue
+            ts_sec  = ts_ms / 1000
+            dt_jst  = _dt.fromtimestamp(ts_sec, tz=JST)
+            w_g     = m.get("weight") or 0
+            mu_g    = m.get("muscleMass") or 0
+            parsed.append({
+                "weight_kg":      round(w_g  / 1000, 2) if w_g  else None,
+                "body_water_pct": m.get("bodyWater"),
+                "body_fat_pct":   m.get("bodyFat"),
+                "muscle_mass_kg": round(mu_g / 1000, 2) if mu_g else None,
+                "time_jst":       dt_jst.strftime("%H:%M"),
+                "ts_sec":         ts_sec,
+            })
+
+        if not parsed:
+            continue
+        parsed.sort(key=lambda x: x["ts_sec"])   # 古い順
+        result[date_str] = {
+            "morning": parsed[0],   # 最も早い計測 = 朝一番
+            "all":     parsed,
+        }
+    return result
+
+
 def fetch_body_composition_range(api, start_date: str, end_date: str):
     """
     日付範囲の体組成データを取得。

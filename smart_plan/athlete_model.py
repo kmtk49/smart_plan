@@ -254,74 +254,150 @@ def fetch_athlete_data(cfg):
     # 体内水分量% (Garmin Index スケール同期 → Intervals.icu では非対応のため None)
     body_water_pct = None
 
-    # ── Garmin Connect 直接取得 (Readiness / 体内水分% / Body Battery) ─────
-    # garminconnect ライブラリがインストールされており、config.yaml に
-    # garmin.email が設定されている場合のみ実行。
-    # 未インストール・API失敗時は警告を出して Intervals.icu 値にフォールバック。
+    # ── Garmin Connect 直接取得 ───────────────────────────────────────────
+    # garminconnect ライブラリ + config.yaml の garmin.email が必要。
+    # ・朝一番の計測 = 日次トレンド用体重・体内水分%
+    # ・1日複数回計測 + トレーニング前後 = ハイドレーション解析
+    # ・Training Readiness 過去14日分
     _g_cfg = cfg.get("garmin", {})
-    # Garmin 履歴データ (plan_output の週次テーブル補完用)
-    garmin_body_water_history  = {}  # date_str → body_water_pct
-    garmin_readiness_history   = {}  # date_str → readiness score
+    garmin_body_water_history     = {}   # date_str → 朝体内水分%
+    garmin_readiness_history      = {}   # date_str → readiness score
+    garmin_morning_weight_history = {}   # date_str → {weight_kg, body_water_pct, body_fat_pct, time_jst}
+    garmin_weigh_ins_all          = {}   # date_str → [{weight_kg, body_water_pct, time_jst, ts_sec}, ...]
+    garmin_hydration_analysis     = {}   # date_str → [{workout, pre, post, loss_kg, ...}]
 
     if _g_cfg.get("email"):
         try:
-            import sys as _sys
-            _sys.path.insert(0, str(Path(__file__).parent.parent))
-            from garmin_health_diagnosis import (fetch_garmin_health,
-                                                  _parse_readiness,
-                                                  _parse_body_battery,
-                                                  _parse_body_comp)
-            print("  📡 Garmin Connect から Readiness / 体内水分% (過去7日) を取得中...")
-            _gh = fetch_garmin_health(
-                _g_cfg["email"],
-                _g_cfg.get("password", ""),
-                days_back=7,
-            )
-            # ── 今日の Readiness ──
-            _rd = _parse_readiness(_gh["today"].get("readiness"))
-            if _rd.get("score") is not None:
-                readiness = float(_rd["score"])
-                _level_str = _rd.get("level", "")
-                print(f"     ✅ Readiness={readiness:.0f}/100  [{_level_str}]"
-                      + (f"  ({_rd['feedback']})" if _rd.get("feedback") else ""))
-            # ── 過去7日の Readiness 履歴 ──
-            for _d, _rdata in (_gh.get("readiness_history") or {}).items():
-                _rp = _parse_readiness(_rdata)
-                if _rp.get("score") is not None:
-                    garmin_readiness_history[_d] = float(_rp["score"])
-            # ── 今日の体内水分% ──
-            _bc = _parse_body_comp(_gh["today"].get("body_comp"))
-            if _bc.get("body_water_pct") is not None:
-                body_water_pct = _bc["body_water_pct"]
-                print(f"     💧 体内水分%={body_water_pct:.1f}%  (Garmin Connect 直接)")
-            # ── 過去7日の体内水分% 履歴 (body_history の dateWeightList から抽出) ──
-            _bh = _gh.get("body_history") or {}
-            _bh_list = (_bh.get("dateWeightList") or
-                        _bh.get("compositionList") or [])
-            for _entry in _bh_list:
-                if not isinstance(_entry, dict):
-                    continue
-                _bcp = _parse_body_comp(_entry)
-                _entry_date = (_entry.get("calendarDate") or
-                               _entry.get("date") or "")[:10]
-                if _entry_date and _bcp.get("body_water_pct") is not None:
-                    garmin_body_water_history[_entry_date] = _bcp["body_water_pct"]
+            from garminconnect import Garmin as _Garmin
+            from datetime import datetime as _datetime, timezone as _tz
+            _JST     = _tz(timedelta(hours=9))
+            _token   = str(Path.home() / ".garminconnect")
+            _garmin  = _Garmin()
+            _garmin.login(_token)
+
+            print("  📡 Garmin Connect から健康データ (過去14日) を取得中...")
+
+            # ── ① 全計測データ (get_weigh_ins) ────────────────────────────
+            from .garmin_fetch_health import fetch_weigh_ins_parsed as _fwp
+            _wi = _fwp(_garmin, days=14)
+
+            for _dstr, _day_data in _wi.items():
+                _morning = _day_data["morning"]
+                garmin_morning_weight_history[_dstr] = _morning
+                garmin_weigh_ins_all[_dstr]           = _day_data["all"]
+                if _morning.get("body_water_pct") is not None:
+                    garmin_body_water_history[_dstr]  = _morning["body_water_pct"]
+
+            # 今日の体内水分% / 朝体重
+            _today_str = date.today().isoformat()
+            if _today_str in garmin_morning_weight_history:
+                _m0 = garmin_morning_weight_history[_today_str]
+                if _m0.get("body_water_pct") is not None:
+                    body_water_pct = _m0["body_water_pct"]
+                    print(f"     💧 体内水分%={body_water_pct:.1f}%  (朝{_m0['time_jst']}計測)")
+                if _m0.get("weight_kg"):
+                    print(f"     ⚖️  朝体重={_m0['weight_kg']:.1f}kg  ({_m0['time_jst']})")
+                if _m0.get("body_fat_pct") and body_fat_pct_well == 0:
+                    body_fat_pct     = _m0["body_fat_pct"]
+                    body_fat_pct_well = body_fat_pct
+                if _m0.get("muscle_mass_kg") and muscle_mass_kg_well == 0:
+                    muscle_mass_kg_well = _m0["muscle_mass_kg"]
+                    print(f"     💪 骨格筋量={muscle_mass_kg_well:.1f}kg  (Garmin 体組成)")
+
             if garmin_body_water_history:
                 print(f"     💧 体内水分% 履歴: {len(garmin_body_water_history)}日分取得")
-            # ── 体組成の補完（wellness未同期時） ──
-            if muscle_mass_kg_well == 0 and _bc.get("muscle_mass_kg"):
-                muscle_mass_kg_well = _bc["muscle_mass_kg"]
-                print(f"     💪 骨格筋量={muscle_mass_kg_well:.1f}kg  (Garmin 体組成)")
-            if body_fat_pct_well == 0 and _bc.get("body_fat_pct"):
-                body_fat_pct = _bc["body_fat_pct"]
-                body_fat_pct_well = body_fat_pct
-            # ── Body Battery (情報表示のみ) ──
-            _bb = _parse_body_battery(_gh["today"].get("body_battery"))
-            if _bb.get("current") is not None:
-                print(f"     🔋 Body Battery={_bb['current']:.0f}")
-            # 取得エラー
-            for _err in (_gh.get("fetch_errors") or []):
-                print(f"     ⚠️  Garmin: {_err}")
+
+            # ── ② Training Readiness 過去14日分 ──────────────────────────
+            for _i in range(0, 15):
+                _d = (date.today() - timedelta(days=_i)).isoformat()
+                try:
+                    _rd_raw = _garmin.get_training_readiness(_d)
+                    if _rd_raw:
+                        _rd_item = _rd_raw[0] if isinstance(_rd_raw, list) else _rd_raw
+                        _score = (_rd_item.get("score") or
+                                  _rd_item.get("trainingReadinessScore") or
+                                  _rd_item.get("value"))
+                        if _score is not None:
+                            garmin_readiness_history[_d] = float(_score)
+                            if _i == 0:
+                                readiness = float(_score)
+                                print(f"     ✅ Readiness={readiness:.0f}/100")
+                except Exception:
+                    pass
+
+            # ── ③ ハイドレーション解析: トレーニング前後の体重変化 ────────
+            for _act in (acts_90 or []):
+                _act_start_str = (_act.get("start_date_local") or
+                                  _act.get("start_date") or "")[:19]
+                if not _act_start_str or "T" not in _act_start_str:
+                    continue
+                try:
+                    _act_start_dt = _datetime.fromisoformat(_act_start_str)
+                    _elapsed = float(_act.get("elapsed_time") or
+                                     _act.get("moving_time") or 0)
+                    if _elapsed < 600:        # 10分未満はスキップ
+                        continue
+                    _act_end_dt = _act_start_dt + timedelta(seconds=_elapsed)
+                    _act_date   = _act_start_str[:10]
+                except Exception:
+                    continue
+
+                if (_act_date not in garmin_weigh_ins_all or
+                        len(garmin_weigh_ins_all[_act_date]) < 2):
+                    continue
+
+                _all_m = garmin_weigh_ins_all[_act_date]
+
+                # 運動開始4時間以内の直前計測 = pre
+                _pre = None
+                for _mm in reversed(_all_m):
+                    _mm_dt = _datetime.fromtimestamp(_mm["ts_sec"])
+                    if _mm_dt <= _act_start_dt:
+                        if (_act_start_dt - _mm_dt).total_seconds() <= 4 * 3600:
+                            _pre = _mm
+                        break
+
+                # 運動終了4時間以内の直後計測 = post
+                _post = None
+                for _mm in _all_m:
+                    _mm_dt = _datetime.fromtimestamp(_mm["ts_sec"])
+                    if _mm_dt >= _act_end_dt:
+                        if (_mm_dt - _act_end_dt).total_seconds() <= 4 * 3600:
+                            _post = _mm
+                        break
+
+                if _pre and _post and _pre["ts_sec"] != _post["ts_sec"]:
+                    _loss = (_pre["weight_kg"] or 0) - (_post["weight_kg"] or 0)
+                    if _act_date not in garmin_hydration_analysis:
+                        garmin_hydration_analysis[_act_date] = []
+                    garmin_hydration_analysis[_act_date].append({
+                        "workout":       _act.get("name", "トレーニング"),
+                        "sport":         _act.get("sport_type") or _act.get("sport", ""),
+                        "duration_min":  int(_elapsed / 60),
+                        "pre_time":      _pre["time_jst"],
+                        "post_time":     _post["time_jst"],
+                        "pre_weight_kg": _pre["weight_kg"],
+                        "post_weight_kg":_post["weight_kg"],
+                        "loss_kg":       round(_loss, 2),
+                        "pre_bw_pct":    _pre.get("body_water_pct"),
+                        "post_bw_pct":   _post.get("body_water_pct"),
+                    })
+
+            if garmin_hydration_analysis:
+                _n = sum(len(v) for v in garmin_hydration_analysis.values())
+                print(f"     💦 ハイドレーション解析: {_n}件のトレーニング前後データあり")
+
+            # ── ④ Body Battery ────────────────────────────────────────────
+            try:
+                _bb_raw = _garmin.get_body_battery(_today_str, _today_str)
+                if _bb_raw and isinstance(_bb_raw, list):
+                    _bb_val = (_bb_raw[-1].get("bodyBatteryLevel") or
+                               _bb_raw[-1].get("value"))
+                    if _bb_val is not None:
+                        print(f"     🔋 Body Battery={_bb_val:.0f}")
+            except Exception:
+                pass
+
         except RuntimeError as _ge:
             print(f"  ⚠️  Garmin Connect スキップ ({_ge})")
         except Exception as _ge:
@@ -389,9 +465,12 @@ def fetch_athlete_data(cfg):
             "hrv":hrv,"hrv_7d_avg":hrv_7d,
             "sleep_h":sleep_h,"rhr":rhr,"rhr_avg":rhr_avg,
             "body_fat_pct":    body_fat_pct,
-            "body_water_pct":           body_water_pct,
-            "garmin_body_water_history":garmin_body_water_history,
-            "garmin_readiness_history": garmin_readiness_history,
+            "body_water_pct":               body_water_pct,
+            "garmin_body_water_history":    garmin_body_water_history,
+            "garmin_readiness_history":     garmin_readiness_history,
+            "garmin_morning_weight_history":garmin_morning_weight_history,
+            "garmin_weigh_ins_all":         garmin_weigh_ins_all,
+            "garmin_hydration_analysis":    garmin_hydration_analysis,
             "muscle_mass_kg":  muscle_mass_kg_well if muscle_mass_kg_well > 0 else None,
             "readiness":       readiness,
             "hydration_ml":    hydration_ml,

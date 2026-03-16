@@ -142,12 +142,22 @@ def print_calorie_summary(plan, cfg, athlete=None):
     if not rows:
         return
 
-    # Garmin Connect 履歴で各日の体内水分% / Readiness を補完
-    _bw_hist  = (athlete.get("garmin_body_water_history") or {}) if athlete else {}
-    _rd_hist  = (athlete.get("garmin_readiness_history")  or {}) if athlete else {}
+    # Garmin Connect 履歴で各日の体内水分% / 朝体重 / Readiness を補完
+    _bw_hist   = (athlete.get("garmin_body_water_history")     or {}) if athlete else {}
+    _rd_hist   = (athlete.get("garmin_readiness_history")      or {}) if athlete else {}
+    _mw_hist   = (athlete.get("garmin_morning_weight_history") or {}) if athlete else {}
     _bw_hist_prev = None
+    _wt_hist_prev = None
     for r in rows:
-        # 体内水分%
+        # ── 朝体重で上書き（最も早い計測 = 日次トレンド用）──
+        if r["date"] in _mw_hist and _mw_hist[r["date"]].get("weight_kg"):
+            r["weight"]   = _mw_hist[r["date"]]["weight_kg"]
+            r["weight_src"] = _mw_hist[r["date"]].get("time_jst", "")
+        r["dw"] = (r["weight"] - _wt_hist_prev) if (r["weight"] and _wt_hist_prev) else None
+        if r["weight"]:
+            _wt_hist_prev = r["weight"]
+
+        # ── 体内水分% ──
         if r["hydration_pct"] is None and r["date"] in _bw_hist:
             r["hydration_pct"] = _bw_hist[r["date"]]
         if r["hydration_pct"] is None and r["date"] == rows[-1]["date"]:
@@ -158,7 +168,8 @@ def print_calorie_summary(plan, cfg, athlete=None):
             r["dh"] = r["hydration_pct"] - _bw_hist_prev
         if r["hydration_pct"] is not None:
             _bw_hist_prev = r["hydration_pct"]
-        # Readiness (Garmin Connect 履歴で上書き)
+
+        # ── Readiness (Garmin Connect 履歴で上書き) ──
         if r["date"] in _rd_hist:
             r["readiness"] = _rd_hist[r["date"]]
 
@@ -221,11 +232,49 @@ def print_calorie_summary(plan, cfg, athlete=None):
     kcal_src = athlete.get("total_kcal_src", "BMR+アクティビティ") if athlete else ""
     print(f"  ※ 総kcal = BMR + アクティビティ消費  [{kcal_src}]")
     if has_water:
-        print(f"  ※ 体内水分%(±pp): Garmin Index スケール → Garmin Connect  前日差(pp)")
+        print(f"  ※ 体内水分%(±pp): Garmin Index スケール → Garmin Connect  朝一番の計測値  前日差(pp)")
     if has_readiness:
         print(f"  ※ Readiness: Garmin Connect 直接取得  🟢≥67 通常  🟡34-66 調整  🔴<34 回復優先")
+    print(f"  ※ 体重: Garmin Index 朝一番の計測値を使用（日次トレンド用）")
     print(f"  ※ グリコーゲン推算: 運動消費×0.55÷1600kcal基準 | 睡眠で回復  "
           f"🟢≥75% 充分  🟡50-74% やや不足  🔴<50% 要補給(糖質60-90g)")
+    print(f"{'─'*W}")
+
+    # ── ハイドレーション解析（トレーニング前後の体重・水分変化）────────
+    _hydro = (athlete.get("garmin_hydration_analysis") or {}) if athlete else {}
+    if _hydro:
+        print(f"\n  💦 ハイドレーション解析（トレーニング前後の体重変化）")
+        print(f"  {'─'*W}")
+        print(f"  {'日付':<8}  {'ワークアウト':<22}  {'時間':>5}  "
+              f"{'前':>10}  {'後':>10}  {'変化':>8}  {'体水分変化':>10}")
+        print(f"  {'─'*W}")
+        for _d in sorted(_hydro.keys()):
+            for _h in _hydro[_d]:
+                _pre_str  = (f"{_h['pre_weight_kg']:.1f}kg"
+                             + (f"({_h['pre_bw_pct']:.0f}%)"
+                                if _h.get("pre_bw_pct") else ""))
+                _post_str = (f"{_h['post_weight_kg']:.1f}kg"
+                             + (f"({_h['post_bw_pct']:.0f}%)"
+                                if _h.get("post_bw_pct") else ""))
+                _loss     = _h["loss_kg"]
+                if _loss > 0.05:
+                    _loss_str = f"🔴-{_loss:.2f}kg"
+                elif _loss < -0.05:
+                    _loss_str = f"🟢+{abs(_loss):.2f}kg"
+                else:
+                    _loss_str = f"⚪±{abs(_loss):.2f}kg"
+                _bw_delta = ""
+                if (_h.get("pre_bw_pct") and _h.get("post_bw_pct")):
+                    _d_bw = _h["post_bw_pct"] - _h["pre_bw_pct"]
+                    _bw_delta = f"{_d_bw:+.1f}pp"
+                _dur = f"{_h['duration_min']}分"
+                _nm  = (_h['workout'] or "")[:20]
+                print(f"  {_d[5:]:<8}  {_nm:<22}  {_dur:>5}  "
+                      f"{_pre_str:>10}  {_post_str:>10}  {_loss_str:>8}  {_bw_delta:>10}")
+        print(f"  {'─'*W}")
+        print(f"  ※ 前=運動前4h以内の計測  後=運動後4h以内の計測")
+        print(f"  ※ 🔴 体重減少=発汗+未補給  🟢 体重増加=運動後水分・食事補給  ⚪ ほぼ変化なし")
+        print(f"  ※ 目安: 体重の2%以上の減少(例:{(athlete.get('weight',68)*0.02):.1f}kg↑)は脱水リスク")
     print(f"{'─'*W}\n")
 
 
