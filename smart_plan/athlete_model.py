@@ -325,63 +325,54 @@ def fetch_athlete_data(cfg):
                 except Exception:
                     pass
 
-            # ── ③ ハイドレーション解析: トレーニング前後の体重変化 ────────
+            # ── ③ ハイドレーション解析: 1日の最初/最後の計測ペアを比較 ────
+            # 朝に体重を量り、夕方にも量った日を自動検出する。
+            # 「トレーニング前後4h」という時間制限は現実と合わないため廃止し、
+            # 「1日の最初の計測=朝体重(pre)、最後の計測=夕体重(post)」を基本とする。
+            # その日のトレーニング名/時間帯も合わせて表示する。
+            _act_by_date = {}  # date_str → [act, ...] (10分以上のアクティビティ)
             for _act in (acts_90 or []):
                 _act_start_str = (_act.get("start_date_local") or
-                                  _act.get("start_date") or "")[:19]
-                if not _act_start_str or "T" not in _act_start_str:
+                                  _act.get("start_date") or "")[:10]
+                if not _act_start_str:
                     continue
-                try:
-                    _act_start_dt = _datetime.fromisoformat(_act_start_str)
-                    _elapsed = float(_act.get("elapsed_time") or
-                                     _act.get("moving_time") or 0)
-                    if _elapsed < 600:        # 10分未満はスキップ
-                        continue
-                    _act_end_dt = _act_start_dt + timedelta(seconds=_elapsed)
-                    _act_date   = _act_start_str[:10]
-                except Exception:
+                _elapsed = float(_act.get("elapsed_time") or
+                                 _act.get("moving_time") or 0)
+                if _elapsed < 600:
                     continue
+                _act_by_date.setdefault(_act_start_str, []).append(_act)
 
-                if (_act_date not in garmin_weigh_ins_all or
-                        len(garmin_weigh_ins_all[_act_date]) < 2):
+            for _dstr, _day_wi in garmin_weigh_ins_all.items():
+                if len(_day_wi) < 2:
                     continue
-
-                _all_m = garmin_weigh_ins_all[_act_date]
-
-                # 運動開始4時間以内の直前計測 = pre
-                _pre = None
-                for _mm in reversed(_all_m):
-                    _mm_dt = _datetime.fromtimestamp(_mm["ts_sec"])
-                    if _mm_dt <= _act_start_dt:
-                        if (_act_start_dt - _mm_dt).total_seconds() <= 4 * 3600:
-                            _pre = _mm
-                        break
-
-                # 運動終了4時間以内の直後計測 = post
-                _post = None
-                for _mm in _all_m:
-                    _mm_dt = _datetime.fromtimestamp(_mm["ts_sec"])
-                    if _mm_dt >= _act_end_dt:
-                        if (_mm_dt - _act_end_dt).total_seconds() <= 4 * 3600:
-                            _post = _mm
-                        break
-
-                if _pre and _post and _pre["ts_sec"] != _post["ts_sec"]:
-                    _loss = (_pre["weight_kg"] or 0) - (_post["weight_kg"] or 0)
-                    if _act_date not in garmin_hydration_analysis:
-                        garmin_hydration_analysis[_act_date] = []
-                    garmin_hydration_analysis[_act_date].append({
-                        "workout":       _act.get("name", "トレーニング"),
-                        "sport":         _act.get("sport_type") or _act.get("sport", ""),
-                        "duration_min":  int(_elapsed / 60),
-                        "pre_time":      _pre["time_jst"],
-                        "post_time":     _post["time_jst"],
-                        "pre_weight_kg": _pre["weight_kg"],
-                        "post_weight_kg":_post["weight_kg"],
-                        "loss_kg":       round(_loss, 2),
-                        "pre_bw_pct":    _pre.get("body_water_pct"),
-                        "post_bw_pct":   _post.get("body_water_pct"),
-                    })
+                _pre  = _day_wi[0]   # 最初の計測 = 朝
+                _post = _day_wi[-1]  # 最後の計測 = 夕/夜
+                if _pre["ts_sec"] == _post["ts_sec"]:
+                    continue
+                _loss = (_pre["weight_kg"] or 0) - (_post["weight_kg"] or 0)
+                # その日のトレーニングをまとめる
+                _day_acts = _act_by_date.get(_dstr, [])
+                _workout_summary = "、".join(
+                    (a.get("name") or "")[:15]
+                    for a in _day_acts
+                ) or "計測のみ"
+                _total_min = int(sum(
+                    float(a.get("elapsed_time") or a.get("moving_time") or 0)
+                    for a in _day_acts
+                ) / 60)
+                garmin_hydration_analysis[_dstr] = [{
+                    "workout":        _workout_summary,
+                    "sport":          (_day_acts[0].get("sport_type") or
+                                       _day_acts[0].get("sport", "")) if _day_acts else "",
+                    "duration_min":   _total_min,
+                    "pre_time":       _pre["time_jst"],
+                    "post_time":      _post["time_jst"],
+                    "pre_weight_kg":  _pre["weight_kg"],
+                    "post_weight_kg": _post["weight_kg"],
+                    "loss_kg":        round(_loss, 2),
+                    "pre_bw_pct":     _pre.get("body_water_pct"),
+                    "post_bw_pct":    _post.get("body_water_pct"),
+                }]
 
             if garmin_hydration_analysis:
                 _n = sum(len(v) for v in garmin_hydration_analysis.values())
