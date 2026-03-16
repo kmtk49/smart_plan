@@ -50,6 +50,10 @@ def print_calorie_summary(plan, cfg, athlete=None):
         if d:
             _act_kcal_by_day[d] = _act_kcal_by_day.get(d, 0.0) + float(a.get("calories") or 0)
 
+    # HRV平均（readiness フォールバック推算用）
+    _hrv_all = [float(w.get("hrv") or 0) for w in wellness if w.get("hrv")]
+    _hrv_mean = sum(_hrv_all) / len(_hrv_all) if _hrv_all else 0.0
+
     rows = []
     prev_weight    = None
     prev_hrv       = None
@@ -73,8 +77,12 @@ def print_calorie_summary(plan, cfg, athlete=None):
         rhr        = float(w.get("restingHR") or 0) or None
         sleep_h    = float(w.get("sleepSecs") or 0) / 3600 or None
         readiness  = (w.get("trainingReadiness") or
+                      w.get("training_readiness") or
                       w.get("training_readiness_score") or
                       w.get("icu_training_readiness"))
+        # HRVベース推算（APIデータがない場合のフォールバック）
+        if not readiness and hrv and _hrv_mean > 0:
+            readiness = max(0.0, min(100.0, 50.0 + (hrv / _hrv_mean - 1.0) * 100.0))
 
         # ── 総カロリー計算 (優先順位付き) ─────────────────────────
         # 1) Garmin 同期 "totalKilocalories"

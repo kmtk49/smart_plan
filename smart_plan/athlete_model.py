@@ -242,8 +242,12 @@ def fetch_athlete_data(cfg):
 
     # ── Readiness (Garmin Training Readiness スコア 0-100) ──
     readiness_well = (latest.get("trainingReadiness") or
+                      latest.get("training_readiness") or
                       latest.get("training_readiness_score") or
                       latest.get("icu_training_readiness"))
+    # HRVベース推算（APIデータがない場合のフォールバック）
+    if not readiness_well and hrv_7d > 0 and hrv > 0:
+        readiness_well = max(0.0, min(100.0, 50.0 + (hrv / hrv_7d - 1.0) * 100.0))
     readiness = float(readiness_well) if readiness_well is not None else None
 
     # ── 水分量 (Garmin/Apple Health 同期: ml単位) ──
