@@ -54,7 +54,7 @@ def parse_gcal_events_to_days(events, cfg_cal, athlete=None, cfg=None):
         if day_str not in gcal_days:
             is_weekend = day.weekday() >= 5
             gcal_days[day_str] = {
-                "available_min": cfg_cal["default_availability"]["weekend_max_min"] if is_weekend else 60,
+                "available_min": cfg_cal.get("default_availability", {}).get("weekend_max_min", 120) if is_weekend else 60,
                 "morning_ok": True,
                 "is_trip": False,
                 "races": [],
@@ -232,7 +232,7 @@ def parse_gcal_events_to_days(events, cfg_cal, athlete=None, cfg=None):
             d["morning_ok"] = True
             d["available_min"] = min(
                 d["available_min"] + 30,
-                cfg_cal["default_availability"]["weekend_max_min"])
+                cfg_cal.get("default_availability", {}).get("weekend_max_min", 120))
             d["gcal_notes"].append(f"🏠 {title} → 朝練可・+30分")
             continue
 
