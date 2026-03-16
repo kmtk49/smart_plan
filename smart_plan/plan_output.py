@@ -53,6 +53,8 @@ def print_calorie_summary(plan, cfg, athlete=None):
     # HRV平均（readiness フォールバック推算用）
     _hrv_all = [float(w.get("hrv") or 0) for w in wellness if w.get("hrv")]
     _hrv_mean = sum(_hrv_all) / len(_hrv_all) if _hrv_all else 0.0
+    # athlete レベルの readiness（HRV fallback 込みで計算済み）を最終 fallback として使用
+    _athlete_readiness = athlete.get("readiness") if athlete else None
 
     rows = []
     prev_weight    = None
@@ -83,6 +85,9 @@ def print_calorie_summary(plan, cfg, athlete=None):
         # HRVベース推算（APIデータがない場合のフォールバック）
         if not readiness and hrv and _hrv_mean > 0:
             readiness = max(0.0, min(100.0, 50.0 + (hrv / _hrv_mean - 1.0) * 100.0))
+        # 最終フォールバック: athlete レベルの推算値（HRV fallback 込み）を使用
+        if not readiness and _athlete_readiness is not None:
+            readiness = _athlete_readiness
 
         # ── 総カロリー計算 (優先順位付き) ─────────────────────────
         # 1) Garmin 同期 "totalKilocalories"
