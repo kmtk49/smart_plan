@@ -3,9 +3,12 @@ gcal_sync.py — GCal同期・変換
 smart_plan_v10.py line 5537-5836 から抽出
 """
 
+import os
 import re
 from datetime import date
 from pathlib import Path
+
+_CI = os.environ.get("CI") == "true"
 
 from .result_parser import (
     fetch_weather_for_race, fetch_gdrive_pdf_via_api, parse_split_times_from_text,
@@ -125,7 +128,10 @@ def parse_gcal_events_to_days(events, cfg_cal, athlete=None, cfg=None):
                         file_source = f"gdrive:{_att_id}"
                         print(f"    ☁️  GDrive PDF: {_att_title}  スプリット{len(splits_from_desc)}種  ✅")
                     elif _gerr:
-                        print(f"    ☁️  GDrive [{_att_title}]: {_gerr[:70]}")
+                        if _CI:
+                            print(f"    ☁️  GDrive [{_att_title}]: アクセス不可（CI環境）")
+                        else:
+                            print(f"    ☁️  GDrive [{_att_title}]: {_gerr[:70]}")
 
             # ② 説明欄からファイル名/パスを探す（パターン優先度順）
             FILE_PATTERNS = [
@@ -145,9 +151,10 @@ def parse_gcal_events_to_days(events, cfg_cal, athlete=None, cfg=None):
 
             if found_file:
                 resolved_path, _rl = resolve_result_path(found_file, cfg)
-                print(f"    🔍 Resultsフォルダ検索: '{found_file}'")
-                for _rlog in _rl:
-                    print(f"       {_rlog}")
+                if not _CI:
+                    print(f"    🔍 Resultsフォルダ検索: '{found_file}'")
+                    for _rlog in _rl:
+                        print(f"       {_rlog}")
                 _use_path = resolved_path or found_file
                 file_result = parse_result_file(_use_path, cfg=cfg)
                 if file_result.get("splits"):
@@ -164,8 +171,9 @@ def parse_gcal_events_to_days(events, cfg_cal, athlete=None, cfg=None):
                         if isinstance(_v,dict) and _v.get("str"):
                             print(f"       {_k}: {_v['str']}")
                 elif file_result.get("error"):
-                    print(f"    ⚠️  リザルト読込失敗: {Path(found_file).name}")
-                    print(f"       理由: {file_result['error'][:80]}")
+                    if not _CI:
+                        print(f"    ⚠️  リザルト読込失敗: {Path(found_file).name}")
+                        print(f"       理由: {file_result['error'][:80]}")
                     # CSV fallback: activities_detail.csvから試みる
                     csv_path = _find_activities_csv()
                     if csv_path and csv_path.exists():
