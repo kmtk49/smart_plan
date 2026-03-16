@@ -60,7 +60,7 @@ def calc_nutrition(cfg, athlete, cond, phase, train_h, sport=None):
         notes.append("テーパー期：炭水化物多めでグリコーゲン蓄積")
     elif phase == "build":
         notes.append("ビルド期：練習後30分以内にタンパク質摂取")
-    if not cfg["nutrition"].get("uses_protein_supplement"):
+    if not cfg.get("nutrition", {}).get("uses_protein_supplement"):
         notes.append("鶏むね・卵・魚・豆腐・納豆でタンパク補給")
     if cond["condition"] in ("fatigued", "depleted"):
         notes.append("疲労回復中：青魚・ベリー・ショウガ（抗炎症）")
