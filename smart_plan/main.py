@@ -21,6 +21,7 @@ from .chat import (
     _override_intensity, _fetch_gcal_events_auto, _inject_cal_rival,
     run_chat_server,
 )
+from .runmetrix_parser import find_runmetrix_dir, load_all_sessions, get_form_insights
 
 
 def main():
@@ -98,6 +99,29 @@ def main():
     print_calorie_summary(None, cfg, athlete=athlete)
     # ── GCalスケジュールサマリーをここで表示 ────────────────────────
     print_work_schedule_summary(gcal_days, date.today(), num_days=num_days)
+
+    # ── RunMetrix フォーム解析 ────────────────────────────────────
+    _rm_insights = {}
+    _rm_dir = find_runmetrix_dir()
+    if _rm_dir:
+        _rm_sessions = load_all_sessions(_rm_dir)
+        if _rm_sessions:
+            _rm_insights = get_form_insights(_rm_sessions)
+            print(_rm_insights["summary"])
+            # intensity_hint が reduce の場合はコンディションを疲労側に倒す
+            if _rm_insights.get("intensity_hint") == "reduce":
+                _cur = cond.get("condition", "normal")
+                _bump = {"peak": "good", "good": "normal",
+                         "normal": "fatigued", "fatigued": "fatigued",
+                         "depleted": "depleted"}
+                _new = _bump.get(_cur, "normal")
+                if _new != _cur:
+                    print(f"  ⚠️  フォームデータから疲労傾向を検出 → "
+                          f"コンディションを {_cur} → {_new} に調整")
+                    cond["condition"] = _new
+            # athlete dict に格納（プラン生成・チャットで参照）
+            athlete["runmetrix_insights"] = _rm_insights
+
     user_ctx = _cli_chat_session(athlete, cond, races_from_cal, num_days)
 
     # ── ユーザーが日数を変更した場合は反映 ──────────────────────────

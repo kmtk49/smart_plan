@@ -39,6 +39,12 @@ def _cli_chat_session(athlete, cond, races, num_days):
     print(f"\n  現在のコンディション: {cond_icon} {cond['condition'].upper()}"
           f"  (HRV:{athlete.get('hrv',0):.0f} Form:{athlete.get('form',0):.1f})")
 
+    # RunMetrix フォームコメント（直近セッションのアラートがあれば表示）
+    _rm = athlete.get("runmetrix_insights") or {}
+    _rm_note = _rm.get("coach_note", "")
+    if _rm_note:
+        print(f"  📐 {_rm_note}")
+
     race = ri.get("race")
     if race:
         prio = race.get("priority","B")

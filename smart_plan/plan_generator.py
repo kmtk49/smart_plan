@@ -369,6 +369,17 @@ def generate_days(cfg, athlete, cond_info, race_info, gcal_days,
                 desc        += goal_note
                 workout_doc += f"\n# 🎯 {target_event}対策 本番{dist:.0f}km 向け\n"
 
+        # RunMetrix フォームアラートをランセッションの description に付加
+        if sport == "run":
+            _rm = athlete.get("runmetrix_insights") or {}
+            _rm_alerts = _rm.get("alerts") or []
+            if _rm_alerts:
+                _rm_note = "\n\n📐 【RunMetrix フォーム注意点】\n" + \
+                           "\n".join(f"  ⚠️ {a}" for a in _rm_alerts[:3])
+                desc        += _rm_note
+                workout_doc += f"\n# 📐 RunMetrix フォームアラート\n" + \
+                               "\n".join(f"# - {a}" for a in _rm_alerts[:3]) + "\n"
+
         n_jp = {"run":"🏃 ラン","bike":"🚴 バイク","swim":"🏊 スイム"}.get(sport, sport)
         il   = {"recovery":"リカバリー","easy":"イージー","moderate":"テンポ",
                 "hard":"インターバル/閾値"}.get(intensity, "")
