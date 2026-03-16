@@ -18,4 +18,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 from smart_plan.main import main
 
 if __name__ == "__main__":
-    main()
+    import traceback, sys
+    try:
+        main()
+    except Exception:
+        sys.stdout.flush()
+        traceback.print_exc()
+        sys.exit(1)

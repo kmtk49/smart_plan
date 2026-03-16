@@ -31,6 +31,7 @@ def main():
     parser.add_argument("--start",     type=str, default=None, help="開始日 YYYY-MM-DD")
     parser.add_argument("--today",     action="store_true", help="今日の計画のみ表示")
     parser.add_argument("--no-upload", action="store_true", help="Intervals.icuへのアップロードをスキップ")
+    parser.add_argument("--no-chat",   action="store_true", help="対話セッションをスキップ（CI/自動実行向け）")
     parser.add_argument("--server",    action="store_true", help="HTMLチャットUIサーバーを起動 (localhost:8765)")
     parser.add_argument("--port",      type=int, default=8765, help="サーバーポート (デフォルト: 8765)")
     args = parser.parse_args()
@@ -91,14 +92,24 @@ def main():
         print("="*64)
         return
 
-    # ══════════════════════════════════════════════════
-    # 対話モード: まずコーチとチャットしてからプラン生成
-    # ══════════════════════════════════════════════════
     # ── 過去7日間ウェルネス実績サマリーをここで表示 ──────────────────
     print_calorie_summary(None, cfg, athlete=athlete)
     # ── GCalスケジュールサマリーをここで表示 ────────────────────────
     print_work_schedule_summary(gcal_days, date.today(), num_days=num_days)
-    user_ctx = _cli_chat_session(athlete, cond, races_from_cal, num_days)
+
+    force_intensity = None
+
+    # ══════════════════════════════════════════════════
+    # 対話モード: まずコーチとチャットしてからプラン生成
+    # （--no-chat / CI=true の場合はスキップ）
+    # ══════════════════════════════════════════════════
+    import os
+    no_chat = args.no_chat or os.environ.get("CI") == "true"
+
+    if no_chat:
+        user_ctx = {"num_days": num_days, "feeling": "", "requests": [], "force_intensity": None}
+    else:
+        user_ctx = _cli_chat_session(athlete, cond, races_from_cal, num_days)
 
     # ── ユーザーが日数を変更した場合は反映 ──────────────────────────
     num_days = user_ctx.get("num_days", num_days)
@@ -132,12 +143,16 @@ def main():
         print(f"{'═'*64}")
 
         # ── アップロード or 再構築 確認 ──────────────────────────
-        print("\n  このプランをどうしますか？")
-        print("  [1] Intervals.icu にアップロード")
-        print("  [2] 修正リクエストを追加して再構築")
-        print("  [3] このままキャンセル（アップロードしない）")
-        print()
-        choice = input("  選択 (1/2/3): ").strip()
+        if no_chat:
+            # CI/自動実行: --preview ならスキップ、それ以外はアップロード
+            choice = "3" if args.preview else "1"
+        else:
+            print("\n  このプランをどうしますか？")
+            print("  [1] Intervals.icu にアップロード")
+            print("  [2] 修正リクエストを追加して再構築")
+            print("  [3] このままキャンセル（アップロードしない）")
+            print()
+            choice = input("  選択 (1/2/3): ").strip()
 
         if choice == "1":
             if not args.no_upload:
