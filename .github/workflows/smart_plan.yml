@@ -40,9 +40,9 @@ jobs:
           DAYS="${{ github.event.inputs.days }}"
 
           if [ "$MODE" = "today" ]; then
-            python run_smart_plan.py --today
+            python -u run_smart_plan.py --today
           elif [ "$MODE" = "upload" ]; then
-            python run_smart_plan.py --days "$DAYS" --no-chat
+            python -u run_smart_plan.py --days "$DAYS" --no-chat
           else
-            python run_smart_plan.py --days "$DAYS" --preview --no-chat
+            python -u run_smart_plan.py --days "$DAYS" --preview --no-chat
           fi
