@@ -327,13 +327,18 @@ def fetch_athlete_data(cfg):
 
             # ── ③ ハイドレーション解析: トレーニング前後1時間以内の計測ペア ─
             # ルール:
-            #   pre  = トレーニング開始の1時間以内で直前の計測
-            #   post = トレーニング終了の1時間以内で直後の計測
-            # 複数トレーニング対応: 各トレーニングごとに独立してマッチング。
-            # 2トレーニング間の計測は 1本目のpostかつ2本目のpreになり得る。
+            #   pre  = セッション開始の1時間以内で直前の計測
+            #   post = セッション終了の1時間以内で直後の計測
+            #
+            # セッション分割ルール:
+            #   2つのトレーニングの間に計測がある → それぞれ独立してマッチング
+            #   2つのトレーニングの間に計測がない → 1セッションとしてまとめて
+            #                                       最初のpreと最後のpostを使う
+            # 例(計測Bあり): A→①→B→②→C  ①はA+B、②はB+C (2エントリ)
+            # 例(計測Bなし): A→①→②→C    ①②を合算してA+C (1エントリ)
             _HYDRO_WIN = 3600   # 前後1時間 (秒)
 
-            # date_str → [(start_dt, end_dt, act), ...] を構築
+            # date_str → [(start_dt, end_dt, act, dur_min), ...] を構築
             _act_by_date = {}
             for _act in (acts_90 or []):
                 _sstr = (_act.get("start_date_local") or
@@ -353,45 +358,66 @@ def fetch_athlete_data(cfg):
                 except Exception:
                     continue
 
+            def _find_pre(wi, before_dt):
+                """before_dt の1時間以内で直前の計測を返す"""
+                for _mm in reversed(wi):
+                    _mm_dt = _datetime.fromtimestamp(_mm["ts_sec"])
+                    if _mm_dt <= before_dt:
+                        return _mm if (before_dt - _mm_dt).total_seconds() <= _HYDRO_WIN else None
+                return None
+
+            def _find_post(wi, after_dt):
+                """after_dt の1時間以内で直後の計測を返す"""
+                for _mm in wi:
+                    _mm_dt = _datetime.fromtimestamp(_mm["ts_sec"])
+                    if _mm_dt >= after_dt:
+                        return _mm if (_mm_dt - after_dt).total_seconds() <= _HYDRO_WIN else None
+                return None
+
+            def _has_meas_between(wi, from_dt, to_dt):
+                """from_dt〜to_dt の間に計測があるか"""
+                return any(
+                    from_dt <= _datetime.fromtimestamp(_mm["ts_sec"]) <= to_dt
+                    for _mm in wi
+                )
+
             for _dstr, _day_wi in garmin_weigh_ins_all.items():
                 _day_acts = _act_by_date.get(_dstr, [])
                 if not _day_acts:
-                    continue   # その日にトレーニングがなければスキップ
+                    continue
 
-                # 時刻の早い順にソート
                 _day_acts.sort(key=lambda x: x[0])
                 _entries = []
 
-                for (_sdt, _edt, _act, _dur) in _day_acts:
-                    # pre: 開始1時間以内で直前の計測（最も近いもの）
-                    _pre = None
-                    for _mm in reversed(_day_wi):
-                        _mm_dt = _datetime.fromtimestamp(_mm["ts_sec"])
-                        if _mm_dt <= _sdt:
-                            if (_sdt - _mm_dt).total_seconds() <= _HYDRO_WIN:
-                                _pre = _mm
-                            break
+                # トレーニングをセッションにグループ化
+                # 間に計測がなければ連続セッションとしてまとめる
+                _sessions = [[_day_acts[0]]]
+                for _i in range(1, len(_day_acts)):
+                    _prev_end  = _sessions[-1][-1][1]   # 直前セッション最後のend
+                    _curr_start = _day_acts[_i][0]
+                    if _has_meas_between(_day_wi, _prev_end, _curr_start):
+                        _sessions.append([_day_acts[_i]])   # 計測あり→新セッション
+                    else:
+                        _sessions[-1].append(_day_acts[_i]) # 計測なし→同セッションに合流
 
-                    # post: 終了1時間以内で直後の計測（最も近いもの）
-                    _post = None
-                    for _mm in _day_wi:
-                        _mm_dt = _datetime.fromtimestamp(_mm["ts_sec"])
-                        if _mm_dt >= _edt:
-                            if (_mm_dt - _edt).total_seconds() <= _HYDRO_WIN:
-                                _post = _mm
-                            break
+                for _sess in _sessions:
+                    _sess_start = _sess[0][0]    # セッション最初のstart
+                    _sess_end   = _sess[-1][1]   # セッション最後のend
+                    _total_dur  = sum(s[3] for s in _sess)
+                    _names      = "＋".join((s[2].get("name") or "")[:12] for s in _sess)
 
-                    if not (_pre and _post):
-                        continue
-                    if _pre["ts_sec"] == _post["ts_sec"]:
+                    _pre  = _find_pre(_day_wi,  _sess_start)
+                    _post = _find_post(_day_wi, _sess_end)
+
+                    if not (_pre and _post) or _pre["ts_sec"] == _post["ts_sec"]:
                         continue
 
                     _loss = (_pre["weight_kg"] or 0) - (_post["weight_kg"] or 0)
                     _entries.append({
-                        "workout":        (_act.get("name") or "トレーニング")[:25],
-                        "sport":          (_act.get("sport_type") or
-                                           _act.get("sport", "")),
-                        "duration_min":   _dur,
+                        "workout":        _names[:30],
+                        "sport":          (_sess[0][2].get("sport_type") or
+                                           _sess[0][2].get("sport", "")),
+                        "duration_min":   _total_dur,
                         "pre_time":       _pre["time_jst"],
                         "post_time":      _post["time_jst"],
                         "pre_weight_kg":  _pre["weight_kg"],
@@ -399,6 +425,7 @@ def fetch_athlete_data(cfg):
                         "loss_kg":        round(_loss, 2),
                         "pre_bw_pct":     _pre.get("body_water_pct"),
                         "post_bw_pct":    _post.get("body_water_pct"),
+                        "session_count":  len(_sess),  # 合算セッション数
                     })
 
                 if _entries:
