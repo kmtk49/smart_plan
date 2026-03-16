@@ -72,7 +72,7 @@ def generate_days(cfg, athlete, cond_info, race_info, gcal_days,
         directive_template = None
         directive_label = None
 
-    strength_cfg = cfg["strength"]
+    strength_cfg = cfg.get("strength", {})
     str_sessions = 0
     str_max      = strength_cfg.get("sessions_per_week", 2)
     str_dur      = strength_cfg.get("session_duration_min", 30)
